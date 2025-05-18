@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Ergonomic Posture Detection</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1, h2 {
+            color: #333;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            flex-wrap: wrap;
+        }
+        .controls {
+            background-color: white;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            width: 100%;
+        }
+        .video-container {
+            flex: 1;
+            min-width: 320px;
+            margin-right: 20px;
+        }
+        .results-container {
+            flex: 2;
+            min-width: 400px;
+        }
+        .card {
+            background-color: white;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        video {
+            width: 100%;
+            border-radius: 5px;
+            background-color: #000;
+        }
+        button {
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 4px 8px 4px 0;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        button.disconnect {
+            background-color: #f44336;
+        }
+        select, label {
+            margin-right: 10px;
+            font-size: 16px;
+        }
+        #status {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 15px;
+            margin-left: 10px;
+            font-weight: bold;
+        }
+        .status-disconnected {
+            background-color: #ffcccc;
+            color: #d32f2f;
+        }
+        .status-connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        pre {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .score {
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .risk-low {
+            color: #4CAF50;
+        }
+        .risk-medium {
+            color: #FF9800;
+        }
+        .risk-high {
+            color: #F44336;
+        }
+        .risk-very-high {
+            color: #B71C1C;
+        }
+        .component-scores {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .component {
+            padding: 8px 12px;
+            border-radius: 15px;
+            font-weight: bold;
+        }
+        .recommendations {
+            list-style-type: disc;
+            padding-left: 20px;
+        }
+        .recommendations li {
+            margin-bottom: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Ergonomic Posture Detection</h1>
+    
+    <div class="container">
+        <div class="controls card">
+            <div>
+                <label for="cameraSelect">Camera:</label>
+                <select id="cameraSelect"></select>
+                
+                <label for="intervalSelect">Analysis Interval:</label>
+                <select id="intervalSelect">
+                    <option value="1000">1 second</option>
+                    <option value="2000">2 seconds</option>
+                    <option value="3000">3 seconds</option>
+                    <option value="5000" selected>5 seconds</option>
+                    <option value="10000">10 seconds</option>
+                </select>
+                
+                <button id="connectBtn">Connect</button>
+                <button id="disconnectBtn" class="disconnect" disabled>Disconnect</button>
+                
+                <span id="status" class="status-disconnected">Disconnected</span>
+            </div>
+            <div id="sessionInfo"></div>
+        </div>
+        
+        <div class="video-container">
+            <div class="card">
+                <h2>Camera Feed</h2>
+                <video id="video" autoplay playsinline></video>
+            </div>
+            
+            <div class="card">
+                <h2>Latest Analysis</h2>
+                <div id="latestResult">
+                    <p>No data yet. Start the analysis to see results.</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="results-container">
+            <div class="card">
+                <h2>Analysis Summary</h2>
+                <div id="summaryDisplay">
+                    <p>Summary will appear after collecting enough data.</p>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h2>Detailed Results</h2>
+                <pre id="resultDisplay">Waiting for data...</pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const cameraSelect = document.getElementById('cameraSelect');
+        const intervalSelect = document.getElementById('intervalSelect');
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const statusIndicator = document.getElementById('status');
+        const video = document.getElementById('video');
+        const sessionInfo = document.getElementById('sessionInfo');
+        const resultDisplay = document.getElementById('resultDisplay');
+        const summaryDisplay = document.getElementById('summaryDisplay');
+        const latestResult = document.getElementById('latestResult');
+        
+        // Global variables
+        let socket = null;
+        let captureInterval = null;
+        let userSID = null;
+        let currentStream = null;
+        
+        // Load camera list on page load
+        window.addEventListener('load', () => {
+            navigator.mediaDevices.enumerateDevices()
+                .then(devices => {
+                    const videoDevices = devices.filter(d => d.kind === 'videoinput');
+                    videoDevices.forEach((device, index) => {
+                        const option = document.createElement('option');
+                        option.value = device.deviceId;
+                        option.text = device.label || `Camera ${index + 1}`;
+                        cameraSelect.appendChild(option);
+                    });
+                    
+                    if (videoDevices.length > 0) {
+                        cameraSelect.selectedIndex = 0;
+                        startCamera(videoDevices[0].deviceId);
+                    }
+                })
+                .catch(err => {
+                    console.error("Error accessing camera devices:", err);
+                    alert("Could not access camera devices. Please check permissions.");
+                });
+        });
+        
+        // Switch camera when selection changes
+        cameraSelect.onchange = () => {
+            startCamera(cameraSelect.value);
+        };
+        
+        // Start camera with selected device
+        function startCamera(deviceId) {
+            if (currentStream) {
+                currentStream.getTracks().forEach(track => track.stop());
+            }
+            
+            navigator.mediaDevices.getUserMedia({ 
+                video: { 
+                    deviceId: { exact: deviceId },
+                    width: { ideal: 640 },
+                    height: { ideal: 480 }
+                } 
+            })
+            .then(stream => {
+                currentStream = stream;
+                video.srcObject = stream;
+            })
+            .catch(err => {
+                console.error("Error starting camera:", err);
+                alert("Could not start camera. Please check permissions.");
+            });
+        }
+        
+        // Connect to websocket server
+        connectBtn.onclick = () => {
+            if (socket && socket.connected) return;
+            
+            // Show connecting status
+            statusIndicator.textContent = "Connecting...";
+            statusIndicator.className = "status-disconnected";
+            
+            // Disable connect button during connection
+            connectBtn.disabled = true;
+            
+            // Connect to the WebSocket server
+            socket = io();
+            
+            // Connection successful
+            socket.on('connect', () => {
+                statusIndicator.textContent = "Connected";
+                statusIndicator.className = "status-connected";
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                
+                // Initialize with selected interval
+                const intervalValue = parseInt(intervalSelect.value);
+                socket.emit('init', { interval: intervalValue });
+            });
+            
+            // Handle connection error
+            socket.on('connect_error', (error) => {
+                console.error("Connection error:", error);
+                statusIndicator.textContent = "Connection Failed";
+                statusIndicator.className = "status-disconnected";
+                connectBtn.disabled = false;
+                alert("Failed to connect to server. Please try again.");
+            });
+            
+            // Receive session ID
+            socket.on('connected_info', (data) => {
+                userSID = data.sid;
+                sessionInfo.textContent = `Session ID: ${userSID}`;
+            });
+            
+            // Start capturing frames
+            socket.on('control', (data) => {
+                if (data.command === 'start_capture') {
+                    const intervalTime = data.interval;
+                    
+                    if (captureInterval) clearInterval(captureInterval);
+                    
+                    // Start sending frames at specified interval
+                    captureInterval = setInterval(() => {
+                        if (!socket || !socket.connected) {
+                            clearInterval(captureInterval);
+                            return;
+                        }
+                        
+                        // Create canvas to capture frame
+                        const canvas = document.createElement('canvas');
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                        
+                        // Convert to data URL and send
+                        const dataURL = canvas.toDataURL('image/jpeg', 0.8);
+                        socket.emit('frame', { image: dataURL });
+                    }, intervalTime);
+                }
+            });
+            
+            // Receive processed result
+            socket.on('processed_result', (data) => {
+                const result = data.result;
+                
+                // Update detailed results
+                resultDisplay.textContent = JSON.stringify(result, null, 2);
+                
+                // Update latest analysis
+                updateLatestResult(result);
+            });
+            
+            // Receive summary result
+            socket.on('summary_result', (data) => {
+                updateSummaryDisplay(data);
+            });
+            
+            // Handle auto-disconnect
+            socket.on('auto_disconnect', (data) => {
+                alert(`You were automatically disconnected: ${data.reason}`);
+                handleDisconnect();
+            });
+            
+            // Handle errors
+            socket.on('error', (data) => {
+                console.error("Server error:", data.message);
+                alert(`Error: ${data.message}`);
+            });
+            
+            // Handle disconnect
+            socket.on('disconnect', () => {
+                handleDisconnect();
+                
+                // Fetch final summary if we have a session ID
+                if (userSID) {
+                    setTimeout(() => {
+                        fetch(`/websocket/summary?sid=${userSID}`)
+                            .then(response => response.json())
+                            .then(data => {
+                                if (data.error) {
+                                    console.error("Error fetching summary:", data.error);
+                                } else {
+                                    updateSummaryDisplay(data);
+                                }
+                            })
+                            .catch(err => {
+                                console.error("Error fetching summary:", err);
+                            });
+                    }, 1000);
+                }
+            });
+        };
+        
+        // Disconnect from server
+        disconnectBtn.onclick = () => {
+            if (socket && socket.connected) {
+                socket.disconnect();
+            }
+        };
+        
+        // Handle disconnection UI updates
+        function handleDisconnect() {
+            statusIndicator.textContent = "Disconnected";
+            statusIndicator.className = "status-disconnected";
+            connectBtn.disabled = false;
+            disconnectBtn.disabled = true;
+            
+            if (captureInterval) {
+                clearInterval(captureInterval);
+                captureInterval = null;
+            }
+        }
+        
+        // Update latest analysis display
+        function updateLatestResult(result) {
+            // Format risk level class
+            let riskClass = 'risk-low';
+            if (result.risk_level === 'Medium') {
+                riskClass = 'risk-medium';
+            } else if (result.risk_level === 'High') {
+                riskClass = 'risk-high';
+            } else if (result.risk_level === 'Very High') {
+                riskClass = 'risk-very-high';
+            }
+            
+            // Create HTML content
+            let html = `
+                <div class="score ${riskClass}">
+                    REBA Score: ${result.reba_score.toFixed(1)} (${result.risk_level} Risk)
+                </div>
+                <div class="component-scores">
+            `;
+            
+            // Add component scores
+            const components = {
+                'trunk': 'Trunk',
+                'neck': 'Neck',
+                'upper_arm': 'Upper Arms',
+                'lower_arm': 'Lower Arms',
+                'leg': 'Legs'
+            };
+            
+            for (const [key, label] of Object.entries(components)) {
+                const score = result.component_scores[key];
+                let color = '#4CAF50'; // Green
+                
+                if (key === 'trunk') {
+                    if (score >= 4) color = '#F44336'; // Red
+                    else if (score >= 3) color = '#FF9800'; // Orange
+                    else if (score >= 2) color = '#8BC34A'; // Light green
+                } else if (key === 'neck') {
+                    if (score >= 3) color = '#F44336'; // Red
+                    else if (score >= 2) color = '#FF9800'; // Orange
+                } else if (key === 'upper_arm') {
+                    if (score >= 4) color = '#F44336'; // Red
+                    else if (score >= 3) color = '#FF9800'; // Orange
+                    else if (score >= 2) color = '#FFEB3B'; // Yellow
+                } else if (key === 'lower_arm') {
+                    if (score >= 2) color = '#FF9800'; // Orange
+                } else if (key === 'leg') {
+                    if (score >= 4) color = '#F44336'; // Red
+                    else if (score >= 3) color = '#FF9800'; // Orange
+                    else if (score >= 2) color = '#8BC34A'; // Light green
+                }
+                
+                html += `<span class="component" style="background-color: ${color}; color: white;">${label}: ${score}</span>`;
+            }
+            
+            html += '</div>';
+            
+            // Add feedback if available
+            if (result.feedback) {
+                html += `<p>${result.feedback}</p>`;
+            }
+            
+            // Update the display
+            latestResult.innerHTML = html;
+        }
+        
+        // Update summary display
+        function updateSummaryDisplay(data) {
+            if (!data || data.error) {
+                summaryDisplay.innerHTML = '<p>Error generating summary.</p>';
+                return;
+            }
+            
+            // Format risk level class
+            let riskClass = 'risk-low';
+            if (data.risk_level === 'Medium') {
+                riskClass = 'risk-medium';
+            } else if (data.risk_level === 'High') {
+                riskClass = 'risk-high';
+            } else if (data.risk_level === 'Very High') {
+                riskClass = 'risk-very-high';
+            }
+            
+            // Create summary HTML
+            let html = `
+                <div class="score ${riskClass}">
+                    Average REBA Score: ${data.avg_reba_score.toFixed(1)} (${data.risk_level} Risk)
+                </div>
+                <p>${data.action_text}</p>
+                
+                <h3>Component Risk Areas:</h3>
+                <div class="component-scores">
+            `;
+            
+            // Add component scores
+            const components = {
+                'trunk': 'Trunk',
+                'neck': 'Neck',
+                'upper_arm': 'Upper Arms',
+                'lower_arm': 'Lower Arms',
+                'leg': 'Legs'
+            };
+            
+            for (const [key, label] of Object.entries(components)) {
+                const score = Math.round(data.avg_component_scores[key]);
+                let color = '#4CAF50'; // Green
+                
+                if (key === 'trunk') {
+                    if (score >= 4) color = '#F44336'; // Red
+                    else if (score >= 3) color = '#FF9800'; // Orange
+                    else if (score >= 2) color = '#8BC34A'; // Light green
+                } else if (key === 'neck') {
+                    if (score >= 3) color = '#F44336'; // Red
+                    else if (score >= 2) color = '#FF9800'; // Orange
+                } else if (key === 'upper_arm') {
+                    if (score >= 4) color = '#F44336'; // Red
+                    else if (score >= 3) color = '#FF9800'; // Orange
+                    else if (score >= 2) color = '#FFEB3B'; // Yellow
+                } else if (key === 'lower_arm') {
+                    if (score >= 2) color = '#FF9800'; // Orange
+                } else if (key === 'leg') {
+                    if (score >= 4) color = '#F44336'; // Red
+                    else if (score >= 3) color = '#FF9800'; // Orange
+                    else if (score >= 2) color = '#8BC34A'; // Light green
+                }
+                
+                html += `<span class="component" style="background-color: ${color}; color: white;">${label}: ${score}</span>`;
+            }
+            
+            html += '</div>';
+            
+            // Add REBA statistics
+            html += `
+                <h3>REBA Score Range:</h3>
+                <p>Min: ${data.reba_statistics.min.toFixed(1)} | 
+                   Max: ${data.reba_statistics.max.toFixed(1)} | 
+                   Median: ${data.reba_statistics.median.toFixed(1)} | 
+                   Std Dev: ${data.reba_statistics.std.toFixed(2)}</p>
+            `;
+            
+            // Add high risk periods
+            if (data.high_risk_periods && data.high_risk_periods.length > 0) {
+                html += `
+                    <h3>High Risk Periods Detected (${data.high_risk_periods_count}):</h3>
+                    <ul>
+                `;
+                
+                data.high_risk_periods.forEach((period, index) => {
+                    html += `
+                        <li>Period ${index+1}: Frames ${period.start_frame}-${period.end_frame} 
+                        (Average REBA: ${period.avg_score.toFixed(1)})</li>
+                    `;
+                });
+                
+                html += '</ul>';
+            }
+            
+            // Add recommendations
+            if (data.recommendations && data.recommendations.length > 0) {
+                html += `
+                    <h3>Recommendations:</h3>
+                    <ul class="recommendations">
+                `;
+                
+                data.recommendations.forEach(rec => {
+                    html += `<li>${rec}</li>`;
+                });
+                
+                html += '</ul>';
+            }
+            
+            // Update the display
+            summaryDisplay.innerHTML = html;
+        }
+    </script>
+</body>
+</html>

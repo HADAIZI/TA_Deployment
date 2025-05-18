@@ -1,0 +1,87 @@
+{
+  "avg_reba_score": 3.348956447465079,
+  "reba_statistics": {
+    "min": 1.5151469707489014,
+    "max": 8.50613784790039,
+    "avg": 3.348956447465079,
+    "median": 3.300039768218994,
+    "std": 1.0071935307449598
+  },
+  "risk_level": "Medium",
+  "action_level": 2,
+  "action_text": "Action necessary",
+  "avg_component_scores": {
+    "trunk": 2.3725714285714288,
+    "neck": 1.2834285714285714,
+    "upper_arm": 1.3497142857142856,
+    "lower_arm": 1.8297142857142856,
+    "leg": 2.021714285714286
+  },
+  "angle_statistics": {
+    "neck": {
+      "min": 0.4986255837661154,
+      "max": 68.91392740941045,
+      "avg": 15.781666847356695,
+      "std": 11.753582781368108
+    },
+    "waist": {
+      "min": -106.73267322672883,
+      "max": 162.7415041557881,
+      "avg": -2.03620096754973,
+      "std": 26.949091969208563
+    },
+    "left_upper_arm": {
+      "min": 0.0,
+      "max": 83.46934240897308,
+      "avg": 15.522522556988353,
+      "std": 19.024026243531488
+    },
+    "right_upper_arm": {
+      "min": 0.0,
+      "max": 72.38169262786779,
+      "avg": 10.167383043234985,
+      "std": 13.008147993171708
+    },
+    "left_lower_arm": {
+      "min": 3.1652060777916655,
+      "max": 171.25099799970096,
+      "avg": 106.91848808707442,
+      "std": 29.50793616947474
+    },
+    "right_lower_arm": {
+      "min": 69.12133073273559,
+      "max": 170.40261152378977,
+      "avg": 106.43379539758372,
+      "std": 20.542589865765365
+    },
+    "left_leg": {
+      "min": 83.92018002024024,
+      "max": 175.1829305429562,
+      "avg": 100.43240399462715,
+      "std": 5.336864656942023
+    },
+    "right_leg": {
+      "min": 46.186621427492774,
+      "max": 100.0,
+      "avg": 99.28311819443023,
+      "std": 4.649519589023205
+    }
+  },
+  "high_risk_periods_count": 0,
+  "high_risk_periods": [],
+  "recommendations": [
+    "Ensure even weight distribution between both legs.",
+    "Use an anti-fatigue mat if standing for long periods.",
+    "Consider ergonomic adjustments to your workstation.",
+    "Take regular breaks to change posture and reduce strain."
+  ],
+  "video_metadata": {
+    "filename": "video.mp4",
+    "duration_seconds": 179.32,
+    "total_frames": 4483,
+    "fps": 25.0,
+    "processed_frames": 875,
+    "processed_ratio": 0.19518179790318982
+  },
+  "feedback": "Overall REBA Score: 3.3 - Medium Risk. Action necessary.\n\nFocus on improving: Leg posture (score 2.021714285714286).\n\nRecommended actions:\n- Ensure even weight distribution between legs\n- Avoid prolonged static standing in awkward positions\n"
+}
