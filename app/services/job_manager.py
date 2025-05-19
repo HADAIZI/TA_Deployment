@@ -39,9 +39,26 @@ def update_job(job_id, result):
         
         # Save result to a JSON file for persistence (optional)
         try:
+            # Convert NumPy types to Python native types
+            def convert_numpy(obj):
+                if isinstance(obj, dict):
+                    return {k: convert_numpy(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [convert_numpy(item) for item in obj]
+                elif isinstance(obj, tuple):
+                    return tuple(convert_numpy(item) for item in item)
+                elif hasattr(obj, 'tolist'):  # For numpy arrays
+                    return obj.tolist()
+                elif hasattr(obj, 'item'):  # For numpy scalars (int64, float64, etc.)
+                    return obj.item()
+                else:
+                    return obj
+            
+            serializable_result = convert_numpy(result)
+            
             result_path = os.path.join("temp_jobs", f"{job_id}_result.json")
             with open(result_path, 'w') as f:
-                json.dump(result, f, indent=2)
+                json.dump(serializable_result, f, indent=2)
             schedule_cleanup(result_path, delay_seconds=JOB_EXPIRE_SECONDS)
         except Exception as e:
             print(f"Warning: Could not save job result to file: {e}")

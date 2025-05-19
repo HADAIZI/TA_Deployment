@@ -7,9 +7,6 @@ import os
 os.makedirs('temp_jobs', exist_ok=True)
 os.makedirs('output_images', exist_ok=True)
 
-# Initialize SocketIO with CORS allowed
-socketio = SocketIO(cors_allowed_origins="*")
-
 def create_app():
     app = Flask(__name__)
     
@@ -19,8 +16,5 @@ def create_app():
     # Register blueprint
     from app.routes import ergonomic_bp
     app.register_blueprint(ergonomic_bp)
-    
-    # Initialize SocketIO with the app
-    socketio.init_app(app)
     
     return app
