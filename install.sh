@@ -56,7 +56,7 @@ chmod -R 777 ~/.cache/tensorflow-hub
 
 # Make run.py executable
 echo "[7/7] Finalizing setup..."
-git clone https://github.com/HADAIZI/TA_Deployment
+git clone https://github.com/HADAIZI/TA_Deployment.git
 
 echo "======================================================"
 echo "Installation complete!"
