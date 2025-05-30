@@ -41,7 +41,9 @@ pip3 install \
     scikit-learn \
     joblib \
     opencv-python \
-    tqdm
+    imageio \
+    tqdm \
+    git+https://github.com/tensorflow/docs
 
 # Create required directories
 echo "[5/7] Creating required directories..."
