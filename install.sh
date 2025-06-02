@@ -15,114 +15,88 @@ PYTHON_MAJOR=$(python3 -c 'import sys; print(sys.version_info[0])')
 PYTHON_MINOR=$(python3 -c 'import sys; print(sys.version_info[1])')
 
 if [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 9 ]; then
-    echo "Python 3.9+ required. Installing Python 3.9..."
+    echo "Python 3.9+ required. Installing Python 3.9 with SSL support..."
     
     # Update package list
-    echo "[1/9] Updating package list..."
+    echo "[1/10] Updating package list..."
     sudo apt-get update -y
     
-    # Install software-properties-common for add-apt-repository
-    sudo apt-get install -y software-properties-common
-    
-    # Add deadsnakes PPA for Python 3.9
-    sudo add-apt-repository ppa:deadsnakes/ppa -y
-    sudo apt-get update -y
-    
-    # Install Python 3.9 and ALL SSL dependencies
-    echo "[2/9] Installing Python 3.9 with SSL support..."
+    # Install build dependencies
+    echo "[2/10] Installing build dependencies..."
     sudo apt-get install -y \
-        python3.9 \
-        python3.9-dev \
-        python3.9-distutils \
-        python3.9-venv \
-        python3.9-lib2to3 \
-        python3.9-gdbm \
-        python3.9-tk \
+        build-essential \
+        zlib1g-dev \
+        libncurses5-dev \
+        libgdbm-dev \
+        libnss3-dev \
         libssl-dev \
+        libreadline-dev \
         libffi-dev \
-        openssl \
-        ca-certificates
+        libsqlite3-dev \
+        wget \
+        libbz2-dev \
+        software-properties-common
     
-    # Update certificates
-    sudo apt-get install -y ca-certificates
-    sudo update-ca-certificates
+    # Download and compile Python 3.9 from source with SSL support
+    echo "[3/10] Downloading Python 3.9.18 source..."
+    cd /tmp
+    wget https://www.python.org/ftp/python/3.9.18/Python-3.9.18.tgz
+    tar -xf Python-3.9.18.tgz
+    cd Python-3.9.18
     
-    # Install pip for Python 3.9 using get-pip.py without SSL verification
-    echo "[3/9] Installing pip for Python 3.9..."
-    wget --no-check-certificate https://bootstrap.pypa.io/get-pip.py -O get-pip.py
-    sudo python3.9 get-pip.py --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org
-    rm get-pip.py
+    echo "[4/10] Configuring Python build with SSL..."
+    ./configure --enable-optimizations --with-ssl-default-suites=openssl --enable-loadable-sqlite-extensions
     
-    # Create pip config to always use trusted hosts
-    mkdir -p ~/.pip
-    cat > ~/.pip/pip.conf << 'EOF'
-[global]
-trusted-host = pypi.org
-               pypi.python.org
-               files.pythonhosted.org
-EOF
+    echo "[5/10] Compiling Python 3.9 (this may take a while)..."
+    make -j$(nproc)
+    
+    echo "[6/10] Installing Python 3.9..."
+    sudo make altinstall
+    
+    # Clean up
+    cd /
+    rm -rf /tmp/Python-3.9.18*
     
     # Set Python 3.9 as the default python3
-    echo "[4/9] Setting Python 3.9 as default..."
+    echo "[7/10] Setting Python 3.9 as default..."
     sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.8 1
-    sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.9 2
+    sudo update-alternatives --install /usr/bin/python3 python3 /usr/local/bin/python3.9 2
     
     # Automatically select Python 3.9
     echo "2" | sudo update-alternatives --config python3
     
-    echo "Python 3.9 installed and set as default"
+    # Create symlink for pip3
+    sudo ln -sf /usr/local/bin/pip3.9 /usr/bin/pip3
+    
+    echo "Python 3.9 compiled and installed with SSL support"
 else
     echo "Python 3.9+ already available"
     # Update package list
-    echo "[1/9] Updating package list..."
+    echo "[1/10] Updating package list..."
     sudo apt-get update -y
 fi
 
-# Verify Python version
+# Verify Python version and SSL support
 NEW_PYTHON_VERSION=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')
 echo "Using Python version: $NEW_PYTHON_VERSION"
 
+# Test SSL support
+echo "[8/10] Testing SSL support..."
+python3 -c "import ssl; print('SSL support: OK')" || echo "SSL support: FAILED"
+
 # Install system dependencies
-echo "[5/9] Installing system dependencies..."
+echo "[9/10] Installing system dependencies..."
 sudo apt-get install -y --no-install-recommends \
-    build-essential \
-    python3-dev \
-    python3-pip \
-    python3-setuptools \
-    python3-wheel \
     libopencv-dev \
     python3-opencv \
     ffmpeg \
-    ca-certificates \
-    libssl-dev \
-    libffi-dev \
     git
 
-# Create global pip config for all users
-echo "[6/9] Configuring pip for SSL..."
-sudo mkdir -p /etc/pip
-sudo cat > /etc/pip.conf << 'EOF'
-[global]
-trusted-host = pypi.org
-               pypi.python.org
-               files.pythonhosted.org
-EOF
-
-# Setup Python environment with explicit SSL bypass
-echo "[7/9] Setting up Python environment..."
-python3 -m pip install --upgrade pip setuptools wheel \
-    --trusted-host pypi.org \
-    --trusted-host pypi.python.org \
-    --trusted-host files.pythonhosted.org \
-    --disable-pip-version-check
-
 # Install Python dependencies
-echo "[8/9] Installing Python dependencies..."
+echo "[10/10] Installing Python dependencies..."
+python3 -m pip install --upgrade pip setuptools wheel
+
 python3 -m pip install \
-    --trusted-host pypi.org \
-    --trusted-host pypi.python.org \
-    --trusted-host files.pythonhosted.org \
-    --disable-pip-version-check \
     flask \
     flask-socketio \
     flask-cors \
@@ -142,7 +116,6 @@ python3 -m pip install \
 echo "All dependencies installed successfully"
 
 # Create required directories
-echo "[9/9] Creating required directories..."
 mkdir -p temp_jobs
 mkdir -p output_images
 mkdir -p logs
@@ -157,6 +130,6 @@ chmod -R 777 ~/.cache/tensorflow-hub
 echo "======================================================"
 echo "Installation complete!"
 echo "Python version: $(python3 --version)"
-echo "TensorFlow version: $(python3 -c 'import tensorflow as tf; print(tf.__version__)')"
+echo "SSL test: $(python3 -c 'import ssl; print("SSL working!")' 2>/dev/null || echo 'SSL failed')"
 echo "You can now start the server by running: python3 run.py"
 echo "The server will be available at http://localhost:5050"
