@@ -83,7 +83,6 @@ echo "Using Python version: $NEW_PYTHON_VERSION"
 # Test SSL support
 echo "[8/10] Testing SSL support..."
 python3 -c "import ssl; print('SSL support: OK')" || echo "SSL support: FAILED"
-cd ~
 
 # Install system dependencies
 echo "[9/10] Installing system dependencies..."
@@ -127,6 +126,15 @@ mkdir -p movenet_models
 chmod -R 755 temp_jobs output_images logs modelv4 movenet_models
 mkdir -p ~/.cache/tensorflow-hub
 chmod -R 777 ~/.cache/tensorflow-hub
+
+# Clone repository if not already present
+echo "Setting up repository..."
+if [ ! -d "TA_Deployment" ]; then
+    git clone https://github.com/HADAIZI/TA_Deployment.git
+    echo "Repository cloned"
+else
+    echo "Repository already exists"
+fi
 
 echo "======================================================"
 echo "Installation complete!"
