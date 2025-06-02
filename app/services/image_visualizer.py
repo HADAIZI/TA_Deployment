@@ -1,6 +1,8 @@
 import os
 import cv2
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')  # Force non-interactive backend
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from datetime import datetime
@@ -25,34 +27,17 @@ KEYPOINT_EDGE_INDS_TO_COLOR = {
 # Risk level colors
 RISK_COLORS = {
     'trunk': {
-        1: 'darkgreen',
-        2: 'lightgreen',
-        3: 'yellow',
-        4: 'red',
-        5: 'red',
-        6: 'red'
+        1: '#00FF00', 2: '#FFFF00', 3: '#FFA500', 
+        4: '#FF0000', 5: '#FF0000', 6: '#FF0000'
     },
     'neck': {
-        1: 'green',
-        2: 'yellow',
-        3: 'red',
-        4: 'red'
+        1: '#00FF00', 2: '#FFFF00', 3: '#FFA500', 4: '#FF0000'
     },
     'upper_arm': {
-        1: 'green',
-        2: 'yellow',
-        3: 'yellow',
-        4: 'red'
+        1: '#00FF00', 2: '#FFFF00', 3: '#FFA500', 4: '#FF0000'
     },
     'lower_arm': {
-        1: 'green',
-        2: 'yellow'
-    },
-    'leg': {
-        1: 'darkgreen',
-        2: 'lightgreen',
-        3: 'yellow',
-        4: 'red'
+        1: '#00FF00', 2: '#FF0000'
     }
 }
 
@@ -84,9 +69,37 @@ def _keypoints_and_edges_for_display(keypoints_with_scores, height, width, keypo
 
     return keypoints_xy, edges_xy, edge_colors
 
+def check_imputed_joints(angle_values):
+    """Check which joints were imputed based on angle values"""
+    imputed_joints = {}
+    
+    if 'imputed_angles' in angle_values:
+        imputed_info = angle_values['imputed_angles']
+        imputed_joints = {
+            'neck': imputed_info.get('neck', False),
+            'trunk': imputed_info.get('waist', False),
+            'left_upper_arm': imputed_info.get('left_upper_arm', False),
+            'right_upper_arm': imputed_info.get('right_upper_arm', False),
+            'left_lower_arm': imputed_info.get('left_lower_arm', False),
+            'right_lower_arm': imputed_info.get('right_lower_arm', False)
+        }
+    else:
+        # Fallback: check for standard angle values that indicate imputation
+        imputed_joints = {
+            'neck': angle_values.get('neck', 0) == 5,
+            'trunk': angle_values.get('waist', 0) == 110,
+            'left_upper_arm': angle_values.get('left_upper_arm', 0) == 0,
+            'right_upper_arm': angle_values.get('right_upper_arm', 0) == 0,
+            'left_lower_arm': angle_values.get('left_lower_arm', 0) == 90,
+            'right_lower_arm': angle_values.get('right_lower_arm', 0) == 90
+        }
+    
+    return imputed_joints
+
 def generate_pose_visualization(image, keypoints_with_scores, risk_scores, original_image=None, 
-                               flip_applied=False, crop_region=None, output_image_height=None):
-    """Draws keypoint predictions with risk level coloring"""
+                               flip_applied=False, crop_region=None, output_image_height=None,
+                               angle_values=None):
+    """Draws keypoint predictions with risk level coloring and imputation indicators"""
     # Use original image if flip was applied
     vis_image = original_image if flip_applied else image
     
@@ -97,6 +110,9 @@ def generate_pose_visualization(image, keypoints_with_scores, risk_scores, origi
 
     height, width, _ = vis_image.shape
     aspect_ratio = float(width) / height
+    
+    # Create figure with explicit backend
+    plt.ioff()  # Turn off interactive mode
     fig, ax = plt.subplots(figsize=(12 * aspect_ratio, 12))
     fig.tight_layout(pad=0)
     ax.margins(0)
@@ -106,32 +122,22 @@ def generate_pose_visualization(image, keypoints_with_scores, risk_scores, origi
 
     im = ax.imshow(vis_image)
     
-    # Basic keypoints and edges
-    (keypoint_locs, keypoint_edges, _) = _keypoints_and_edges_for_display(
-        keypoints_with_scores, height, width)
+    # Check for imputed joints
+    imputed_joints = {}
+    if angle_values:
+        imputed_joints = check_imputed_joints(angle_values)
     
-    # Draw risk-colored edges
     # Define the body segments and their risk types
-    # Updated to use ear instead of nose for neck connections
     risk_segments = {
-        # Neck (connecting ear to shoulders)
-        ((3, 5), (4, 6)): 'neck',  
-        
-        # Trunk (connecting shoulders to hips)
-        ((5, 11), (6, 12)): 'trunk',
-        
-        # Upper arms
-        ((5, 7), (6, 8)): 'upper_arm',
-        
-        # Lower arms
-        ((7, 9), (8, 10)): 'lower_arm',
-        
-        # Legs
-        ((11, 13), (12, 14), (13, 15), (14, 16)): 'leg'
+        ((3, 5), (4, 6)): ('neck', imputed_joints.get('neck', False)),  
+        ((5, 11), (6, 12)): ('trunk', imputed_joints.get('trunk', False)),
+        ((5, 7),): ('upper_arm', imputed_joints.get('left_upper_arm', False)),
+        ((6, 8),): ('upper_arm', imputed_joints.get('right_upper_arm', False)),
+        ((7, 9),): ('lower_arm', imputed_joints.get('left_lower_arm', False)),
+        ((8, 10),): ('lower_arm', imputed_joints.get('right_lower_arm', False))
     }
     
     # Draw connection between shoulders
-    # This helps with visualization but doesn't have a risk color
     if (keypoints_with_scores[0, 0, 5, 2] > KEYPOINT_THRESHOLD and 
         keypoints_with_scores[0, 0, 6, 2] > KEYPOINT_THRESHOLD):
         x1 = keypoints_with_scores[0, 0, 5, 1] * width
@@ -142,15 +148,17 @@ def generate_pose_visualization(image, keypoints_with_scores, risk_scores, origi
         shoulder_line = plt.Line2D([x1, x2], [y1, y2], lw=3, color='blue', zorder=2)
         ax.add_line(shoulder_line)
     
-    # Draw edges with risk-based coloring
-    for segment_pairs, risk_type in risk_segments.items():
-        risk_level = risk_scores.get(f'{risk_type}_score', 1)
-        color = RISK_COLORS[risk_type].get(risk_level, 'gray')
+    # Draw edges with risk-based coloring or white for imputed
+    for segment_pairs, (risk_type, is_imputed) in risk_segments.items():
+        if is_imputed:
+            color = 'white'
+        else:
+            risk_level = risk_scores.get(f'{risk_type}_score', 1)
+            color = RISK_COLORS[risk_type].get(risk_level, 'gray')
         
         for edge_pair in segment_pairs:
             idx1, idx2 = edge_pair
             
-            # Check if keypoints exist and have sufficient confidence
             if (keypoints_with_scores[0, 0, idx1, 2] > KEYPOINT_THRESHOLD and 
                 keypoints_with_scores[0, 0, idx2, 2] > KEYPOINT_THRESHOLD):
                 
@@ -176,7 +184,6 @@ def generate_pose_visualization(image, keypoints_with_scores, risk_scores, origi
     
     # Add predicted REBA score text
     if 'reba_score' in risk_scores:
-        # Determine risk level color
         reba_score = risk_scores['reba_score']
         if reba_score <= 2:
             reba_color = 'darkgreen'
@@ -193,44 +200,62 @@ def generate_pose_visualization(image, keypoints_with_scores, risk_scores, origi
     
     # Add risk legend
     legend_y = height * 0.95
-    ax.text(width * 0.05, legend_y, "Risk Levels:", fontsize=14, color='black', 
-            bbox=dict(facecolor='white', alpha=0.7))
+    ax.text(width * 0.05, legend_y, "Skor REBA per Bagian:", fontsize=14, color='black', 
+            bbox=dict(facecolor='white', alpha=0.8))
     
     legend_items = [
-        ("Neck", risk_scores.get('neck_score', 0)),
-        ("Trunk", risk_scores.get('trunk_score', 0)),
-        ("Upper Arms", risk_scores.get('upper_arm_score', 0)),
-        ("Lower Arms", risk_scores.get('lower_arm_score', 0)),
-        ("Legs", risk_scores.get('leg_score', 0))
+        ("Leher", risk_scores.get('neck_score', 1), 'neck'),
+        ("Batang Tubuh", risk_scores.get('trunk_score', 1), 'trunk'),
+        ("Lengan Atas", risk_scores.get('upper_arm_score', 1), 'upper_arm'),
+        ("Lengan Bawah", risk_scores.get('lower_arm_score', 1), 'lower_arm')
     ]
     
-    for i, (name, level) in enumerate(legend_items):
-        y_pos = legend_y - (i+1) * height * 0.05
-        color = RISK_COLORS[name.lower().replace(" ", "_").replace("s", "")].get(level, 'gray')
+    y_offset = 0.05
+    for i, (name, level, risk_type) in enumerate(legend_items):
+        y_pos = legend_y - (i+1) * height * y_offset
+        color = RISK_COLORS[risk_type].get(level, 'gray')
         ax.text(width * 0.07, y_pos, f"• {name}: {level}", fontsize=12, color='black',
                 bbox=dict(facecolor=color, alpha=0.7))
     
-    # Add crop region if provided
-    if crop_region is not None:
-        xmin = max(crop_region['x_min'] * width, 0.0)
-        ymin = max(crop_region['y_min'] * height, 0.0)
-        rec_width = min(crop_region['x_max'], 0.99) * width - xmin
-        rec_height = min(crop_region['y_max'], 0.99) * height - ymin
-        rect = patches.Rectangle(
-            (xmin, ymin), rec_width, rec_height,
-            linewidth=1, edgecolor='b', facecolor='none')
-        ax.add_patch(rect)
-
-    # Convert figure to image
+    # Add imputation indicator
+    if any(imputed_joints.values()):
+        y_pos = legend_y - len(legend_items) * height * y_offset - height * 0.02
+        ax.text(width * 0.07, y_pos, "• Putih: Data Diestimasi", fontsize=12, color='black',
+                bbox=dict(facecolor='white', alpha=0.7, edgecolor='black'))
+    
+    # Convert figure to image (ROBUST VERSION)
     fig.canvas.draw()
-    image_from_plot = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-    image_from_plot = image_from_plot.reshape(
-        fig.canvas.get_width_height()[::-1] + (3,))
+    
+    try:
+        # Method 1: Try the standard approach
+        image_from_plot = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+        image_from_plot = image_from_plot.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    except AttributeError:
+        try:
+            # Method 2: Alternative for older matplotlib
+            renderer = fig.canvas.get_renderer()
+            raw_data = renderer.tostring_rgb()
+            image_from_plot = np.frombuffer(raw_data, dtype=np.uint8)
+            image_from_plot = image_from_plot.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        except:
+            try:
+                # Method 3: Use print_to_buffer
+                buf, (w, h) = fig.canvas.print_to_buffer()
+                image_from_plot = np.frombuffer(buf, dtype=np.uint8)
+                if len(image_from_plot.shape) == 1:
+                    image_from_plot = image_from_plot.reshape((h, w, 4))[:, :, :3]  # RGBA to RGB
+            except:
+                # Method 4: Fallback - create a blank image
+                print("Warning: Could not extract visualization, creating blank image")
+                image_from_plot = np.ones((height, width, 3), dtype=np.uint8) * 128
+    
     plt.close(fig)
+    plt.ion()  # Turn interactive mode back on
     
     # Resize if requested
     if output_image_height is not None:
         output_image_width = int(output_image_height / height * width)
         image_from_plot = cv2.resize(image_from_plot, dsize=(output_image_width, output_image_height),
                                      interpolation=cv2.INTER_CUBIC)
+    
     return image_from_plot

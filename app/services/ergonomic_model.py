@@ -2,7 +2,7 @@ import os
 import numpy as np
 import tensorflow as tf
 import joblib
-import pandas as pd  # Make sure this import is present
+import pandas as pd
 from collections import deque
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -10,6 +10,8 @@ import cv2
 import json
 from datetime import datetime
 import warnings
+from scipy.signal import savgol_filter, find_peaks
+from scipy.stats import skew, kurtosis
 
 # Suppress TensorFlow warnings
 warnings.filterwarnings('ignore')
@@ -46,7 +48,11 @@ def get_model_resources():
             'model': model,
             'scaler': preprocessing_data['scaler'],
             'model_features': preprocessing_data['model_features'],
-            'core_angles': preprocessing_data['core_angles'],
+            'core_angles': preprocessing_data.get('core_angles', [
+                'Neck Angle', 'Left Upper Arm Angle', 'Right Upper Arm Angle',
+                'Left Lower Arm Angle', 'Right Lower Arm Angle', 'Waist Angle',
+                'Left Leg Angle', 'Right Leg Angle'
+            ]),
             'sequence_length': preprocessing_data.get('sequence_length', SEQUENCE_LENGTH),
             'max_gap': preprocessing_data.get('max_gap', MAX_GAP),
             'static_window': preprocessing_data.get('static_window', 30),
@@ -62,6 +68,227 @@ def get_model_resources():
         print(f"Error loading model resources: {e}")
         return None
 
+def engineer_features_for_single_image(row_dict, resources):
+    """
+    Engineer features for a single image using the same pipeline as training
+    This matches your top 30 features exactly
+    """
+    if resources is None:
+        from app.services.ergonomic_model import get_model_resources
+        resources = get_model_resources()
+        
+    if resources is None:
+        raise ValueError("Could not load model resources")
+    
+    # Create pseudo-sequence by replicating the single row (matches training approach)
+    sequence_length = resources.get('sequence_length', 60)
+    rows = [row_dict.copy() for _ in range(sequence_length)]
+    
+    # Add frame numbers to simulate temporal sequence
+    for i, row in enumerate(rows):
+        row['Frame'] = i
+    
+    df = pd.DataFrame(rows)
+    
+    # Core angles from your training
+    core_angles = [
+        'Neck Angle', 'Left Upper Arm Angle', 'Right Upper Arm Angle',
+        'Left Lower Arm Angle', 'Right Lower Arm Angle', 'Waist Angle',
+        'Left Leg Angle', 'Right Leg Angle'
+    ]
+    
+    # 1. Basic transformations (matches your top 30 features)
+    for angle in core_angles:
+        if angle in df.columns:
+            # Trigonometric features (sin, cos)
+            df[f'{angle}_sin'] = np.sin(np.radians(df[angle]))
+            df[f'{angle}_cos'] = np.cos(np.radians(df[angle]))
+            
+            # Squared features
+            df[f'{angle}_squared'] = df[angle] ** 2
+            
+            # Log features (safe log with abs + 1)
+            df[f'{angle}_log'] = np.log(np.abs(df[angle]) + 1)
+    
+    # 2. Range violation features (matches your training)
+    normal_ranges = {
+        'Neck Angle': (0, 45),
+        'Waist Angle': (75, 105),
+        'Left Upper Arm Angle': (-20, 120),
+        'Right Upper Arm Angle': (-20, 120),
+        'Left Lower Arm Angle': (60, 140),
+        'Right Lower Arm Angle': (60, 140),
+        'Left Leg Angle': (80, 120),
+        'Right Leg Angle': (80, 120)
+    }
+    
+    for angle, (min_val, max_val) in normal_ranges.items():
+        if angle in df.columns:
+            violations = (df[angle] < min_val) | (df[angle] > max_val)
+            df[f'{angle}_range_violation'] = violations.astype(int)
+    
+    # 3. Slouch pattern (from your top 30)
+    if 'Waist Angle' in df.columns and 'Neck Angle' in df.columns:
+        slouch_pattern = (df['Waist Angle'] > 60) & (df['Neck Angle'] > 10)
+        df['slouch_pattern'] = slouch_pattern.astype(float)
+    
+    # 4. Coordination dominance (from your top 30)
+    df['coordination_dominance'] = 0.5  # Default value for single image
+    
+    # 5. Velocity and acceleration features (from your top 30)
+    # For single image, these will be 0 but needed for model compatibility
+    df['Waist Angle_velocity_mean'] = 0.0
+    df['Waist Angle_acceleration_mean'] = 0.0
+    
+    # 6. Skewness feature (from your top 30)
+    df['Left Lower Arm Angle_skewness'] = 0.0  # Default for single image
+    
+    # 7. Additional required features for compatibility
+    additional_features = [
+        'arm_coordination_symmetry', 'leg_coordination_symmetry', 
+        'axial_coordination', 'cross_body_coordination', 'neck_waist_coupling',
+        'com_stability', 'total_postural_sway', 'balance_challenge_index', 
+        'stability_margin', 'movement_smoothness', 'movement_efficiency', 
+        'coordination_consistency', 'joint_health_score', 'arm_ratio_consistency', 
+        'natural_posture_score', 'postural_transition_density', 'movement_rhythmicity', 
+        'postural_adaptation', 'postural_complexity', 'postural_entropy', 
+        'forward_head_pattern', 'asymmetric_loading_pattern'
+    ]
+    
+    # Set defaults for single image (no temporal data)
+    for feature in additional_features:
+        if feature not in df.columns:
+            df[feature] = 0.5  # Neutral default
+    
+    # Add more skewness and kurtosis features that might be in model
+    for angle in core_angles:
+        if angle in df.columns:
+            df[f'{angle}_skewness'] = 0.0  # Single image = no distribution
+            df[f'{angle}_kurtosis'] = 0.0   # Single image = no distribution
+    
+    # Get model features (your top 30)
+    model_features = resources['model_features']
+    
+    # Take the last row (most representative after temporal processing)
+    final_row = df.iloc[-1]
+    
+    # Extract features that exist, set missing ones to 0
+    features_dict = {}
+    missing_features = []
+    
+    for feature in model_features:
+        if feature in final_row:
+            value = final_row[feature]
+            # Ensure no NaN or inf values
+            if np.isnan(value) or np.isinf(value):
+                features_dict[feature] = 0.0
+            else:
+                features_dict[feature] = float(value)
+        else:
+            features_dict[feature] = 0.0
+            missing_features.append(feature)
+    
+    if missing_features:
+        print(f"Warning: Missing features set to 0: {missing_features[:5]}{'...' if len(missing_features) > 5 else ''}")
+    
+    # Calculate component scores using REBA scoring logic
+    component_scores = calculate_component_scores_from_angles(row_dict)
+    
+    return features_dict, component_scores
+
+def calculate_component_scores_from_angles(row_dict):
+    """Calculate REBA component scores from joint angles (matches your REBA implementation)"""
+    
+    # Neck score calculation (matches your training)
+    neck_angle = row_dict.get('Neck Angle', 0)
+    if 0 <= neck_angle < 20:
+        neck_score = 1
+    elif 20 <= neck_angle < 45:
+        neck_score = 2
+    elif 45 <= neck_angle < 60:
+        neck_score = 3
+    elif neck_angle >= 60:
+        neck_score = 4
+    elif neck_angle < 0:
+        neck_score = 2 if neck_angle >= -20 else 3
+    else:
+        neck_score = 1
+    
+    # Trunk score calculation (matches your training)
+    waist_angle = row_dict.get('Waist Angle', 90)
+    if waist_angle >= 0:  # Forward flexion
+        if 0 <= waist_angle <= 5:
+            trunk_score = 1
+        elif 5 < waist_angle <= 20:
+            trunk_score = 2
+        elif 20 < waist_angle <= 60:
+            trunk_score = 3
+        elif 60 < waist_angle <= 90:
+            trunk_score = 4
+        elif 90 < waist_angle <= 120:
+            trunk_score = 5
+        else:
+            trunk_score = 6
+    else:  # Extension
+        abs_angle = abs(waist_angle)
+        if abs_angle <= 5:
+            trunk_score = 1
+        elif abs_angle <= 20:
+            trunk_score = 2
+        elif abs_angle < 45:
+            trunk_score = 3
+        else:
+            trunk_score = 4
+    
+    # Upper arm score calculation (matches your training)
+    left_upper = abs(row_dict.get('Left Upper Arm Angle', 0))
+    right_upper = abs(row_dict.get('Right Upper Arm Angle', 0))
+    max_upper_arm = max(left_upper, right_upper)
+    
+    if -20 <= max_upper_arm < 20:
+        upper_arm_score = 1
+    elif 20 <= max_upper_arm < 45:
+        upper_arm_score = 2
+    elif (max_upper_arm < -20) or (45 <= max_upper_arm < 90):
+        upper_arm_score = 3
+    elif max_upper_arm >= 90:
+        upper_arm_score = 4
+    else:
+        upper_arm_score = 1
+    
+    # Lower arm score calculation (matches your training)
+    def score_lower_arm(angle):
+        return 1 if 60 <= angle < 100 else 2
+    
+    left_lower_score = score_lower_arm(row_dict.get('Left Lower Arm Angle', 90))
+    right_lower_score = score_lower_arm(row_dict.get('Right Lower Arm Angle', 90))
+    lower_arm_score = max(left_lower_score, right_lower_score)
+    
+    # Leg score calculation (kept for compatibility but expert said not used)
+    def calc_leg_deviation(angle):
+        return min(abs(angle - 90), abs(angle - 110))
+    
+    left_leg_dev = calc_leg_deviation(row_dict.get('Left Leg Angle', 100))
+    right_leg_dev = calc_leg_deviation(row_dict.get('Right Leg Angle', 100))
+    max_leg_dev = max(left_leg_dev, right_leg_dev)
+    
+    if max_leg_dev <= 20:
+        leg_score = 2
+    elif max_leg_dev <= 40:
+        leg_score = 3
+    elif max_leg_dev > 40:
+        leg_score = 4
+    else:
+        leg_score = 1
+    
+    return {
+        'trunk_score': int(trunk_score),
+        'neck_score': int(neck_score),
+        'upper_arm_score': int(upper_arm_score),
+        'lower_arm_score': int(lower_arm_score),
+        'leg_score': int(leg_score)  # Keep for compatibility
+    }
+
 def predict_single_image(features, resources=None):
     """Make prediction for a single image"""
     if resources is None:
@@ -72,6 +299,8 @@ def predict_single_image(features, resources=None):
         
     model = resources['model']
     scaler = resources['scaler']
+    
+    # Convert features dict to array
     features_arr = np.array([list(features.values())])
     
     # Scale the features
@@ -176,167 +405,59 @@ def get_action_level(reba_score):
         return 4, "Action necessary NOW"
 
 def generate_feedback(component_scores, reba_score):
-    """Generate textual feedback based on component scores and REBA score"""
-    feedback = f"Overall REBA Score: {reba_score:.1f} - "
+    """Generate simple Indonesian feedback based on component scores and REBA score"""
+    feedback = f"Skor REBA: {reba_score:.1f} - "
     
-    # Add risk level
+    # Add risk level in Indonesian
     risk_level = get_risk_level(reba_score)
-    action_level, action_text = get_action_level(reba_score)
-    feedback += f"{risk_level} Risk. {action_text}.\n\n"
+    risk_level_id = {
+        "Negligible": "Sangat Rendah",
+        "Low": "Rendah", 
+        "Medium": "Sedang",
+        "High": "Tinggi",
+        "Very High": "Sangat Tinggi"
+    }.get(risk_level, risk_level)
     
-    # Identify highest risk components
-    components = []
+    feedback += f"Risiko {risk_level_id}.\n\n"
     
-    if component_scores['trunk_score'] >= 3:  # Changed 'trunk' to 'trunk_score'
-        components.append(f"Trunk posture (score {component_scores['trunk_score']})")
+    # Simple angle-based recommendations in Indonesian
+    recommendations = []
     
-    if component_scores['neck_score'] >= 2:  # Changed 'neck' to 'neck_score'
-        components.append(f"Neck posture (score {component_scores['neck_score']})")
+    # Trunk recommendations based on component score
+    if component_scores['trunk_score'] >= 3:
+        recommendations.append("Luruskan punggung, jangan terlalu membungkuk.")
     
-    if component_scores['upper_arm_score'] >= 3:  # Changed 'upper_arm' to 'upper_arm_score'
-        components.append(f"Upper arm position (score {component_scores['upper_arm_score']})")
+    # Neck recommendations  
+    if component_scores['neck_score'] >= 2:
+        recommendations.append("Angkat kepala, jangan terlalu menunduk.")
     
-    if component_scores['lower_arm_score'] == 2:  # Changed 'lower_arm' to 'lower_arm_score'
-        components.append("Lower arm position")
+    # Upper arm recommendations
+    if component_scores['upper_arm_score'] >= 3:
+        recommendations.append("Turunkan posisi lengan atas, jangan terlalu terangkat.")
     
-    if component_scores['leg_score'] >= 2:  # Changed 'leg' to 'leg_score'
-        components.append(f"Leg posture (score {component_scores['leg_score']})")
-        
-    # Add component-specific feedback
-    if components:
-        feedback += "Focus on improving: " + ", ".join(components) + ".\n\n"
-        
-        # Add specific recommendations
-        feedback += "Recommended actions:\n"
-        
-        if "Trunk posture" in " ".join(components):
-            feedback += "- Keep your back straight when possible\n"
-            feedback += "- Avoid excessive bending or twisting\n"
-            
-        if "Neck posture" in " ".join(components):
-            feedback += "- Position work at eye level to reduce neck flexion\n"
-            feedback += "- Avoid looking down for extended periods\n"
-            
-        if "Upper arm" in " ".join(components):
-            feedback += "- Lower your work surface to reduce shoulder strain\n"
-            feedback += "- Keep elbows close to your body when possible\n"
-            
-        if "Lower arm" in " ".join(components):
-            feedback += "- Position work to allow 90-110° elbow angles\n"
-            
-        if "Leg posture" in " ".join(components):
-            feedback += "- Ensure even weight distribution between legs\n"
-            feedback += "- Avoid prolonged static standing in awkward positions\n"
+    # Lower arm recommendations
+    if component_scores['lower_arm_score'] >= 2:
+        recommendations.append("Atur sudut siku sekitar 90 derajat.")
+    
+    # General recommendations
+    if reba_score <= 3:
+        if not recommendations:
+            recommendations.append("Postur sudah cukup baik, pertahankan posisi ini.")
+    elif reba_score <= 7:
+        if not recommendations:
+            recommendations.append("Perbaiki postur duduk untuk mengurangi risiko.")
+        recommendations.append("Sesekali ubah posisi untuk mengurangi kelelahan.")
     else:
-        feedback += "Your posture shows no major ergonomic concerns at this time."
+        recommendations.append("Segera perbaiki postur duduk karena berisiko tinggi.")
+        recommendations.append("Istirahat sejenak dan atur ulang posisi duduk.")
+    
+    # Add recommendations to feedback
+    if recommendations:
+        feedback += "Saran perbaikan:\n"
+        for i, rec in enumerate(recommendations, 1):
+            feedback += f"{i}. {rec}\n"
     
     return feedback
-
-def engineer_features_for_single_image(row_dict, resources):
-    """Engineer features for a single image"""
-    core_angles = resources['core_angles']
-    
-    # Create DataFrame for single row
-    df = pd.DataFrame([row_dict])
-    
-    # Calculate imputation penalty
-    df['imputation_penalty'] = df[[
-        'Left Arm Imputed', 'Right Arm Imputed',
-        'Left Leg Imputed', 'Right Leg Imputed'
-    ]].sum(axis=1) * 0.2
-    
-    # Neck flex score calculation
-    df['neck_flex_degree'] = df['Neck Angle']  # Convert to flexion angle
-    df['neck_flex_score'] = 0  # Initialize
-    
-    # Apply logic from NeckREBA class
-    df.loc[df['neck_flex_degree'].between(0, 20, inclusive='left'), 'neck_flex_score'] = 1
-    df.loc[df['neck_flex_degree'].between(20, 45, inclusive='left'), 'neck_flex_score'] = 2
-    df.loc[df['neck_flex_degree'].between(45, 60, inclusive='left'), 'neck_flex_score'] = 3
-    df.loc[df['neck_flex_degree'] >= 60, 'neck_flex_score'] = 4
-    df.loc[df['neck_flex_degree'] < 0, 'neck_flex_score'] = np.where(
-        df.loc[df['neck_flex_degree'] < 0, 'neck_flex_degree'] >= -20, 2, 3
-    )
-
-    # Trunk flex score calculation
-    df['trunk_flex_score'] = 0  # Initialize
-    waist_angle = df['Waist Angle']
-
-    # Forward flexion cases (positive angle)
-    df.loc[waist_angle.between(0, 5, inclusive='both'), 'trunk_flex_score'] = 1
-    df.loc[waist_angle.between(5, 20, inclusive='right'), 'trunk_flex_score'] = 2
-    df.loc[waist_angle.between(20, 60, inclusive='right'), 'trunk_flex_score'] = 3
-    df.loc[waist_angle.between(60, 90, inclusive='right'), 'trunk_flex_score'] = 4
-    df.loc[waist_angle.between(90, 120, inclusive='right'), 'trunk_flex_score'] = 5
-    df.loc[waist_angle > 120, 'trunk_flex_score'] = 6
-
-    # Extension cases (negative angle)
-    abs_ext_angle = np.abs(df.loc[waist_angle < 0, 'Waist Angle'])
-    df.loc[waist_angle < 0, 'trunk_flex_score'] = np.where(
-        abs_ext_angle <= 5, 1,
-        np.where(abs_ext_angle <= 20, 2,
-                 np.where(abs_ext_angle < 45, 3, 4))
-    )
-
-    # Upper arm score calculation using UpperArmREBA logic
-    df['max_upper_arm_angle'] = df[['Left Upper Arm Angle', 'Right Upper Arm Angle']].abs().max(axis=1)
-    df['upper_arm_score'] = 0  # Initialize
-
-    df.loc[df['max_upper_arm_angle'].between(-20, 20, inclusive='left'), 'upper_arm_score'] = 1
-    df.loc[df['max_upper_arm_angle'].between(20, 45, inclusive='left'), 'upper_arm_score'] = 2
-    df.loc[(df['max_upper_arm_angle'] < -20) | 
-           (df['max_upper_arm_angle'].between(45, 90, inclusive='left')), 'upper_arm_score'] = 3
-    df.loc[df['max_upper_arm_angle'] >= 90, 'upper_arm_score'] = 4
-
-    # Lower arm score calculation using LAREBA logic
-    def score_lower_arm(angle):
-        return 1 if 60 <= angle < 100 else 2
-
-    df['left_lower_arm_score'] = df['Left Lower Arm Angle'].apply(score_lower_arm)
-    df['right_lower_arm_score'] = df['Right Lower Arm Angle'].apply(score_lower_arm)
-    df['lower_arm_score'] = df[['left_lower_arm_score', 'right_lower_arm_score']].max(axis=1)
-
-    # Leg score calculation
-    def calc_leg_deviation(angle):
-        return min(abs(angle - 90), abs(angle - 110))
-
-    df['left_leg_deviation'] = df['Left Leg Angle'].apply(calc_leg_deviation)
-    df['right_leg_deviation'] = df['Right Leg Angle'].apply(calc_leg_deviation)
-    df['max_leg_deviation'] = df[['left_leg_deviation', 'right_leg_deviation']].max(axis=1)
-
-    df['leg_score'] = 1  # Initialize
-    df.loc[df['max_leg_deviation'].between(0, 20, inclusive='right'), 'leg_score'] = 2
-    df.loc[df['max_leg_deviation'].between(20, 40, inclusive='right'), 'leg_score'] = 3
-    df.loc[df['max_leg_deviation'] > 40, 'leg_score'] = 4
-    
-    # Simplified Activity Score (for images, set to default)
-    df['static_posture'] = 1  # Assume static for single image
-    df['rapid_movement'] = 0  # No movement in a single image
-    df['activity_score'] = 1  # Default for static posture
-    
-    # Set all temporal features to 0 for single image
-    df['Neck Angle_volatility_1s'] = 0
-    df['Waist Angle_volatility_1s'] = 0
-    df['Neck Angle_stability_2s'] = 0
-    df['Waist Angle_stability_2s'] = 0
-    df['neck_awkward_time_5s'] = 0
-    df['trunk_awkward_time_5s'] = 0
-    
-    # Posture Symmetry
-    df['arm_asymmetry'] = np.abs(df['Left Upper Arm Angle'] - df['Right Upper Arm Angle'])
-    df['leg_asymmetry'] = np.abs(df['Left Leg Angle'] - df['Right Leg Angle'])
-    
-    # Return only the features needed for prediction
-    features_dict = df[resources['model_features']].iloc[0].to_dict()
-    component_scores = {
-        'trunk_score': int(df['trunk_flex_score'].iloc[0]),
-        'neck_score': int(df['neck_flex_score'].iloc[0]),
-        'upper_arm_score': int(df['upper_arm_score'].iloc[0]),
-        'lower_arm_score': int(df['lower_arm_score'].iloc[0]),
-        'leg_score': int(df['leg_score'].iloc[0])
-    }
-    
-    return features_dict, component_scores
 
 # Initialize model resources on import
 get_model_resources()

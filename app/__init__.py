@@ -1,5 +1,7 @@
+import matplotlib
+matplotlib.use('Agg')
+
 from flask import Flask
-from flask_socketio import SocketIO
 from flask_cors import CORS
 import os
 

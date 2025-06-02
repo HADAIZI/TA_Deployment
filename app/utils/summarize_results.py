@@ -15,7 +15,7 @@ def calculate_reba_statistics(results):
 
 def calculate_component_averages(results):
     """Calculate average component scores"""
-    component_types = ['trunk', 'neck', 'upper_arm', 'lower_arm', 'leg']
+    component_types = ['trunk', 'neck', 'upper_arm', 'lower_arm']  # Removed leg as per expert
     
     averages = {}
     for component in component_types:
@@ -83,47 +83,76 @@ def identify_high_risk_periods(results, threshold=7.0, min_duration=3):
     return high_risk_periods
 
 def generate_recommendations(results):
-    """Generate recommendations based on analysis results"""
+    """Generate simple angle-based recommendations in Indonesian"""
     reba_scores = [result['reba_score'] for result in results]
     avg_reba = np.mean(reba_scores)
     
     component_averages = calculate_component_averages(results)
     
+    # Calculate average angles for specific recommendations
+    angles = {}
+    for result in results:
+        for angle_type, angle_value in result['angle_values'].items():
+            if angle_type not in angles:
+                angles[angle_type] = []
+            angles[angle_type].append(angle_value)
+    
+    avg_angles = {k: np.mean(v) for k, v in angles.items()}
+    
     recommendations = []
     
-    # Trunk recommendations
+    # Trunk recommendations based on actual waist angle
     if component_averages['trunk'] >= 3:
-        recommendations.append("Adjust your work height to avoid excessive trunk bending.")
-        recommendations.append("Consider using a supportive chair that maintains proper spinal alignment.")
+        waist_angle = avg_angles.get('waist', 90)
+        if waist_angle > 105:  # Forward lean
+            recommendations.append("Luruskan punggung, jangan terlalu membungkuk ke depan.")
+        elif waist_angle < 85:  # Backward lean  
+            recommendations.append("Duduk lebih tegak, jangan terlalu bersandar ke belakang.")
+        else:
+            recommendations.append("Perbaiki posisi duduk agar punggung lebih lurus.")
     
-    # Neck recommendations
+    # Neck recommendations based on actual neck angle
     if component_averages['neck'] >= 2:
-        recommendations.append("Position your monitor at eye level to reduce neck strain.")
-        recommendations.append("Take regular breaks to relieve neck tension.")
+        neck_angle = avg_angles.get('neck', 0)
+        if neck_angle > 20:
+            recommendations.append("Angkat kepala, jangan terlalu menunduk.")
+        else:
+            recommendations.append("Atur posisi kepala agar lebih tegak.")
     
-    # Upper arm recommendations
+    # Upper arm recommendations based on actual angles
     if component_averages['upper_arm'] >= 3:
-        recommendations.append("Lower your work surface to keep arms closer to your body.")
-        recommendations.append("Use armrests when appropriate to reduce shoulder strain.")
+        left_upper = avg_angles.get('left_upper_arm', 0)
+        right_upper = avg_angles.get('right_upper_arm', 0)
+        max_upper = max(abs(left_upper), abs(right_upper))
+        
+        if max_upper > 45:
+            recommendations.append("Turunkan posisi lengan atas, jangan terlalu terangkat.")
+        else:
+            recommendations.append("Atur posisi lengan atas agar lebih nyaman.")
     
-    # Lower arm recommendations
+    # Lower arm recommendations based on actual angles
     if component_averages['lower_arm'] >= 2:
-        recommendations.append("Adjust workstation height to maintain 90-110° elbow angles.")
-    
-    # Leg recommendations
-    if component_averages['leg'] >= 2:
-        recommendations.append("Ensure even weight distribution between both legs.")
-        recommendations.append("Use an anti-fatigue mat if standing for long periods.")
+        left_lower = avg_angles.get('left_lower_arm', 90)
+        right_lower = avg_angles.get('right_lower_arm', 90)
+        
+        if left_lower < 60 or right_lower < 60:
+            recommendations.append("Buka siku lebih lebar, jangan terlalu menekuk.")
+        elif left_lower > 100 or right_lower > 100:
+            recommendations.append("Tekuk siku lebih dalam, jangan terlalu lurus.")
+        else:
+            recommendations.append("Atur sudut siku sekitar 90 derajat.")
     
     # General recommendations based on overall REBA score
     if avg_reba <= 3:
-        recommendations.append("Continue maintaining good posture with minor adjustments.")
+        if not recommendations:  # Only add if no specific recommendations
+            recommendations.append("Postur sudah cukup baik, pertahankan posisi ini.")
     elif avg_reba <= 7:
-        recommendations.append("Consider ergonomic adjustments to your workstation.")
-        recommendations.append("Take regular breaks to change posture and reduce strain.")
+        if len(recommendations) == 0:
+            recommendations.append("Perbaiki postur duduk untuk mengurangi risiko.")
+        recommendations.append("Sesekali ubah posisi untuk mengurangi kelelahan.")
     else:
-        recommendations.append("Immediate action needed to redesign this work task.")
-        recommendations.append("Consider ergonomic consultation to address high-risk factors.")
+        recommendations.append("Segera perbaiki postur duduk karena berisiko tinggi.")
+        recommendations.append("Istirahat sejenak dan atur ulang posisi duduk.")
     
     return recommendations
 
@@ -135,15 +164,15 @@ def summarize_results(results):
         results: List of frame-by-frame result dictionaries
         
     Returns:
-        dict: Summary statistics and recommendations
+        dict: Summary statistics and recommendations in Indonesian
     """
     if not results:
-        return {"error": "No valid results to summarize"}
+        return {"error": "Tidak ada hasil untuk dianalisis"}
     
     # Calculate REBA score statistics
     reba_stats = calculate_reba_statistics(results)
     
-    # Calculate average component scores
+    # Calculate average component scores (excluding legs as per expert)
     avg_component_scores = calculate_component_averages(results)
     
     # Calculate angle statistics
@@ -152,7 +181,7 @@ def summarize_results(results):
     # Identify high risk periods
     high_risk_periods = identify_high_risk_periods(results)
     
-    # Generate recommendations
+    # Generate recommendations in Indonesian
     recommendations = generate_recommendations(results)
     
     # Determine overall risk level

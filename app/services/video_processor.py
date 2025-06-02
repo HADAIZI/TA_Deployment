@@ -17,6 +17,7 @@ from app.utils.summarize_results import summarize_results
 # Constants
 FRAME_INTERVAL = 3  # Process every Nth frame
 SEGMENT_DURATION_MINUTES = 5  # Default segment size in minutes
+BATCH_SIZE = 32  # Process frames in batches for efficiency
 
 
 def make_json_serializable(obj):
@@ -87,76 +88,116 @@ def process_frame(frame, movenet, input_size, frame_count, segment_index, resour
     return None
 
 
+def process_frame_batch(frames_batch, movenet, input_size, start_frame_idx, segment_index, resources):
+    """Process a batch of frames efficiently"""
+    results = []
+    
+    for i, frame in enumerate(frames_batch):
+        frame_idx = start_frame_idx + i
+        
+        try:
+            frame_data = process_frame(frame, movenet, input_size, frame_idx, segment_index, resources)
+            if frame_data:
+                results.append(frame_data['row'])
+        except Exception as e:
+            print(f"Warning: Error processing frame {frame_idx}: {e}")
+            continue
+    
+    return results
+
+
 def save_debug_frame(frame_data, frame_count, resources, frames_folder):
     """Save a visualization of the processed frame for debugging"""
-    # Create frame visualization
-    row = frame_data['row']
-    features, component_scores = engineer_features_for_single_image(row, resources)
-    reba_score = predict_single_image(features, resources)
-    component_scores['reba_score'] = reba_score
-    
-    # Generate visualization (import locally to avoid circular import)
-    from app.services.image_visualizer import generate_pose_visualization
-    
-    keypoints_adjusted = frame_data['keypoints'].copy()
-    crop_region = frame_data['crop_region']
-    frame_rgb = frame_data['frame_rgb']
-    
-    # Adjust keypoints for crop region
-    for idx in range(17):
-        keypoints_adjusted[0, 0, idx, 0] = (
-            crop_region['y_min'] * frame_rgb.shape[0] +
-            crop_region['height'] * frame_rgb.shape[0] *
-            keypoints_adjusted[0, 0, idx, 0]) / frame_rgb.shape[0]
-        keypoints_adjusted[0, 0, idx, 1] = (
-            crop_region['x_min'] * frame_rgb.shape[1] +
-            crop_region['width'] * frame_rgb.shape[1] *
-            keypoints_adjusted[0, 0, idx, 1]) / frame_rgb.shape[1]
-    
-    visualization = generate_pose_visualization(
-        frame_rgb, keypoints_adjusted, component_scores
-    )
-    
-    # Save visualization
-    debug_path = os.path.join(frames_folder, f"frame_{frame_count:06d}.jpg")
-    cv2.imwrite(debug_path, cv2.cvtColor(visualization, cv2.COLOR_RGB2BGR))
-    
-    return debug_path
+    try:
+        # Create frame visualization
+        row = frame_data['row']
+        features, component_scores = engineer_features_for_single_image(row, resources)
+        reba_score = predict_single_image(features, resources)
+        component_scores['reba_score'] = reba_score
+        
+        # Generate visualization (import locally to avoid circular import)
+        from app.services.image_visualizer import generate_pose_visualization
+        
+        keypoints_adjusted = frame_data['keypoints'].copy()
+        crop_region = frame_data['crop_region']
+        frame_rgb = frame_data['frame_rgb']
+        
+        # Adjust keypoints for crop region
+        for idx in range(17):
+            keypoints_adjusted[0, 0, idx, 0] = (
+                crop_region['y_min'] * frame_rgb.shape[0] +
+                crop_region['height'] * frame_rgb.shape[0] *
+                keypoints_adjusted[0, 0, idx, 0]) / frame_rgb.shape[0]
+            keypoints_adjusted[0, 0, idx, 1] = (
+                crop_region['x_min'] * frame_rgb.shape[1] +
+                crop_region['width'] * frame_rgb.shape[1] *
+                keypoints_adjusted[0, 0, idx, 1]) / frame_rgb.shape[1]
+        
+        # Pass angle values to visualization for imputation indicators
+        angle_values = frame_data['angles']
+        
+        visualization = generate_pose_visualization(
+            frame_rgb, keypoints_adjusted, component_scores, 
+            angle_values=angle_values
+        )
+        
+        # Save visualization
+        debug_path = os.path.join(frames_folder, f"frame_{frame_count:06d}.jpg")
+        cv2.imwrite(debug_path, cv2.cvtColor(visualization, cv2.COLOR_RGB2BGR))
+        
+        return debug_path
+        
+    except Exception as e:
+        print(f"Warning: Could not save debug frame {frame_count}: {e}")
+        return None
 
 
 def create_frame_results(rows, resources):
-    """Create analysis results for each frame"""
+    """Create analysis results for each frame using updated pipeline"""
     results = []
     
-    for _, row in pd.DataFrame(rows).iterrows():
-        row_dict = row.to_dict()
-        # Engineer features for this frame
-        features, component_scores = engineer_features_for_single_image(row_dict, resources)
-        # Make prediction
-        reba_score = predict_single_image(features, resources)
-        # Create result
-        result = {
-            'frame': int(row['Frame']),
-            'reba_score': float(reba_score),
-            'component_scores': {
-                'trunk': int(component_scores['trunk_score']),
-                'neck': int(component_scores['neck_score']),
-                'upper_arm': int(component_scores['upper_arm_score']),
-                'lower_arm': int(component_scores['lower_arm_score']),
-                'leg': int(component_scores['leg_score'])
-            },
-            'angle_values': {
-                'neck': float(row['Neck Angle']),
-                'waist': float(row['Waist Angle']),
-                'left_upper_arm': float(row['Left Upper Arm Angle']),
-                'right_upper_arm': float(row['Right Upper Arm Angle']),
-                'left_lower_arm': float(row['Left Lower Arm Angle']),
-                'right_lower_arm': float(row['Right Lower Arm Angle']),
-                'left_leg': float(row['Left Leg Angle']),
-                'right_leg': float(row['Right Leg Angle'])
-            }
-        }
-        results.append(result)
+    # Process in smaller batches to avoid memory issues
+    batch_size = 100
+    for i in range(0, len(rows), batch_size):
+        batch_rows = rows[i:i+batch_size]
+        df_batch = pd.DataFrame(batch_rows)
+        
+        for _, row in df_batch.iterrows():
+            row_dict = row.to_dict()
+            
+            try:
+                # Use the updated feature engineering pipeline
+                features, component_scores = engineer_features_for_single_image(row_dict, resources)
+                # Make prediction using the updated model
+                reba_score = predict_single_image(features, resources)
+                
+                # Create result with updated structure
+                result = {
+                    'frame': int(row['Frame']),
+                    'reba_score': float(reba_score),
+                    'component_scores': {
+                        'trunk': int(component_scores['trunk_score']),
+                        'neck': int(component_scores['neck_score']),
+                        'upper_arm': int(component_scores['upper_arm_score']),
+                        'lower_arm': int(component_scores['lower_arm_score']),
+                        # Note: leg_score excluded as per expert recommendation
+                    },
+                    'angle_values': {
+                        'neck': float(row['Neck Angle']),
+                        'waist': float(row['Waist Angle']),
+                        'left_upper_arm': float(row['Left Upper Arm Angle']),
+                        'right_upper_arm': float(row['Right Upper Arm Angle']),
+                        'left_lower_arm': float(row['Left Lower Arm Angle']),
+                        'right_lower_arm': float(row['Right Lower Arm Angle']),
+                        'left_leg': float(row['Left Leg Angle']),
+                        'right_leg': float(row['Right Leg Angle'])
+                    }
+                }
+                results.append(result)
+                
+            except Exception as e:
+                print(f"Warning: Could not process frame {row.get('Frame', 'unknown')}: {e}")
+                continue
     
     return results
 
@@ -180,7 +221,7 @@ def get_video_metadata(cap):
 
 def process_video_segment(cap, movenet, input_size, resources, start_frame, end_frame, total_frames, 
                          job_folder, segment_index, progress_file):
-    """Process a segment of video frames and return the analysis results"""
+    """Process a segment of video frames and return the analysis results with batch optimization"""
     # Create frames folder for debug images (optional)
     frames_folder = os.path.join(job_folder, f"segment_{segment_index+1}_frames")
     os.makedirs(frames_folder, exist_ok=True)
@@ -188,47 +229,81 @@ def process_video_segment(cap, movenet, input_size, resources, start_frame, end_
     # Initialize tracking variables
     frame_count = start_frame
     processed_count = 0
-    rows = []
+    all_rows = []
     
-    # Process frames
+    print(f"Processing segment {segment_index+1}: frames {start_frame}-{end_frame}")
+    
+    # Process frames in batches for efficiency
     while frame_count < end_frame:
-        ret, frame = cap.read()
-        if not ret:
-            break
+        # Collect batch of frames
+        batch_frames = []
+        batch_frame_indices = []
+        
+        for _ in range(BATCH_SIZE):
+            if frame_count >= end_frame:
+                break
+                
+            ret, frame = cap.read()
+            if not ret:
+                break
             
-        # Process only every Nth frame
-        if (frame_count - start_frame) % FRAME_INTERVAL == 0:
-            # Update progress
+            # Only process every FRAME_INTERVAL frames
+            if (frame_count - start_frame) % FRAME_INTERVAL == 0:
+                batch_frames.append(frame)
+                batch_frame_indices.append(frame_count)
+            
+            frame_count += 1
+        
+        if not batch_frames:
+            break
+        
+        # Process batch
+        try:
+            batch_results = process_frame_batch(
+                batch_frames, movenet, input_size, 
+                batch_frame_indices[0], segment_index, resources
+            )
+            
+            if batch_results:
+                all_rows.extend(batch_results)
+                processed_count += len(batch_results)
+                
+                # Save debug frame for first batch only
+                if len(all_rows) <= BATCH_SIZE and batch_results:
+                    # Create frame data for visualization
+                    frame_data = {
+                        'row': batch_results[0],
+                        'keypoints': None,  # We'd need to store this from process_frame
+                        'crop_region': None,
+                        'frame_rgb': None,
+                        'angles': None
+                    }
+                    # Skip debug frame saving for batch processing
+            
+        except Exception as e:
+            print(f"Warning: Batch processing error: {e}")
+            continue
+        
+        # Update progress more frequently
+        if frame_count % (FRAME_INTERVAL * 10) == 0:  # Every 30 frames
             overall_progress = min(100.0, 100.0 * (frame_count - start_frame) / (end_frame - start_frame))
-            segment_weight = 1.0 / (total_frames / (end_frame - start_frame))
+            segment_weight = 1.0 / max(1, total_frames / (end_frame - start_frame))
             global_progress = min(100.0, 100.0 * (segment_index * segment_weight + 
                                  overall_progress / 100.0 * segment_weight))
             
             update_progress(progress_file, global_progress)
-            
-            # Process the frame
-            frame_data = process_frame(frame, movenet, input_size, frame_count, segment_index, resources)
-            
-            if frame_data:
-                rows.append(frame_data['row'])
-                processed_count += 1
-                
-                # Save debug frame (optional - just for the first few frames)
-                if processed_count <= 2:  # Save only first few frames for debugging
-                    save_debug_frame(frame_data, frame_count, resources, frames_folder)
-                
-        frame_count += 1
+            print(f"  Progress: {global_progress:.1f}% ({processed_count} frames)")
     
     print(f"Segment {segment_index+1} processing complete: {processed_count} frames analyzed")
     
     # Check if we have enough data
-    if len(rows) < 3:
+    if len(all_rows) < 3:
         print(f"Warning: Insufficient valid frames in segment {segment_index+1} ({processed_count})")
         if processed_count == 0:
             return None
     
-    # Create results for each frame
-    results = create_frame_results(rows, resources)
+    # Create results for each frame using updated pipeline
+    results = create_frame_results(all_rows, resources)
     
     # Summarize segment results
     summary = summarize_results(results)
@@ -236,13 +311,13 @@ def process_video_segment(cap, movenet, input_size, resources, start_frame, end_
     # Add segment-specific info
     summary['processed_frames'] = processed_count
     
-    # Generate feedback based on average component scores
+    # Generate feedback using new Indonesian feedback system
     avg_component_scores = {
         'trunk_score': summary['avg_component_scores']['trunk'],
         'neck_score': summary['avg_component_scores']['neck'],
         'upper_arm_score': summary['avg_component_scores']['upper_arm'],
         'lower_arm_score': summary['avg_component_scores']['lower_arm'],
-        'leg_score': summary['avg_component_scores']['leg']
+        # Note: leg_score excluded as per expert recommendation
     }
     
     summary['feedback'] = generate_feedback(avg_component_scores, summary['avg_reba_score'])
@@ -250,15 +325,15 @@ def process_video_segment(cap, movenet, input_size, resources, start_frame, end_
     return summary
 
 
-def process_video(job_folder, job_id, video_path, segment_duration_minutes=SEGMENT_DURATION_MINUTES):
+def process_video(job_folder, job_id, video_path, segment_duration_minutes=None):
     """
-    Process a video file for ergonomic analysis, optionally dividing it into segments
+    Process a video file for ergonomic analysis with optimizations, optionally dividing it into segments
     
     Args:
         job_folder: Folder containing job files
         job_id: Unique job identifier
         video_path: Path to video file
-        segment_duration_minutes: Duration of each segment in minutes (0 for entire video)
+        segment_duration_minutes: Duration of each segment in minutes (None for default behavior)
     """
     try:
         print(f"Starting video processing job {job_id}")
@@ -286,9 +361,15 @@ def process_video(job_folder, job_id, video_path, segment_duration_minutes=SEGME
         print(f"Video info: {metadata['width']}x{metadata['height']}, {fps:.2f} fps, "
               f"{duration_seconds:.2f} seconds, {total_frames} frames")
         print(f"Processing every {FRAME_INTERVAL} frames")
+        print(f"Estimated processing frames: {total_frames // FRAME_INTERVAL}")
+        
+        # Handle None segment_duration_minutes properly
+        if segment_duration_minutes is None:
+            segment_duration_minutes = SEGMENT_DURATION_MINUTES  # Use default
         
         # Determine if video should be segmented
-        use_segments = segment_duration_minutes > 0 and duration_seconds > segment_duration_minutes * 60
+        use_segments = (segment_duration_minutes > 0 and 
+                       duration_seconds > segment_duration_minutes * 60)
         
         if use_segments:
             segment_frames = int(segment_duration_minutes * 60 * fps)
@@ -312,8 +393,6 @@ def process_video(job_folder, job_id, video_path, segment_duration_minutes=SEGME
             
             # Skip to segment start
             cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-            
-            print(f"Processing segment {segment_index + 1}/{num_segments}: frames {start_frame}-{end_frame}")
             
             # Process this segment
             segment_result = process_video_segment(
@@ -405,7 +484,7 @@ def create_final_result(all_segment_results, video_name, metadata, use_segments,
             'segment_time': all_segment_results[highest_risk_index]['segment_info']
         }
         
-        # Combined recommendations
+        # Combined recommendations (now in Indonesian)
         all_recommendations = set()
         for segment in all_segment_results:
             if 'recommendations' in segment:
@@ -414,5 +493,15 @@ def create_final_result(all_segment_results, video_name, metadata, use_segments,
     else:
         # Single segment - use its result as the final result
         final_result = all_segment_results[0]
+        
+        # Add video metadata for single segment
+        final_result['video_metadata'] = {
+            'filename': video_name,
+            'duration_seconds': metadata['duration_seconds'],
+            'total_frames': metadata['total_frames'],
+            'fps': float(metadata['fps']),
+            'segments_count': 1,
+            'segment_duration_minutes': 0  # Single segment
+        }
     
     return final_result

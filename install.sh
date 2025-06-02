@@ -41,7 +41,9 @@ pip3 install \
     scikit-learn \
     joblib \
     opencv-python \
-    tqdm
+    imageio \
+    tqdm \
+    git+https://github.com/tensorflow/docs
 
 # Create required directories
 echo "[5/7] Creating required directories..."
@@ -56,7 +58,7 @@ chmod -R 777 ~/.cache/tensorflow-hub
 
 # Make run.py executable
 echo "[7/7] Finalizing setup..."
-chmod +x run.py
+git clone https://github.com/HADAIZI/TA_Deployment.git
 
 echo "======================================================"
 echo "Installation complete!"

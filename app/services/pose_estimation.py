@@ -6,6 +6,7 @@ import os
 from datetime import datetime
 from collections import deque
 import matplotlib.pyplot as plt
+from pathlib import Path
 from app.services.ergonomic_model import get_model_resources, predict_single_image, get_risk_level, generate_feedback
 from app.services.image_visualizer import generate_pose_visualization
 
@@ -23,17 +24,21 @@ KEYPOINT_DICT = {
     'left_knee': 13, 'right_knee': 14, 'left_ankle': 15, 'right_ankle': 16
 }
 
-def init_movenet():
-    """Initialize the MoveNet model"""
-    global _movenet, _input_size
+def load_movenet_from_cache(model_name="movenet_thunder", cache_dir="movenet_models"):
+    """Load MoveNet from local cache directory"""
+    cache_path = Path(cache_dir)
+    model_path = cache_path / model_name
     
-    if _movenet is not None:
-        return _movenet, _input_size
+    if not model_path.exists():
+        print(f"❌ Model not found at {model_path}")
+        print(f"Please download the model first using the MoveNet downloader")
+        return None, None
     
     try:
-        import tensorflow_hub as hub
-        model_url = "https://tfhub.dev/google/movenet/singlepose/thunder/4"
-        module = hub.load(model_url)
+        print(f"📁 Loading {model_name} from cache: {model_path}")
+        
+        # Load the model from the cached directory
+        module = tf.saved_model.load(str(model_path))
         
         def movenet_wrapper(input_image):
             """Runs MoveNet on an input image."""
@@ -43,14 +48,52 @@ def init_movenet():
             keypoints_with_scores = outputs['output_0'].numpy()
             return keypoints_with_scores
         
-        _movenet = movenet_wrapper
-        _input_size = 256
+        # Set input size based on model type
+        input_size = 192 if "lightning" in model_name else 256
         
-        print("MoveNet model initialized successfully")
+        print(f"✅ {model_name} loaded successfully! Input size: {input_size}")
+        return movenet_wrapper, input_size
+        
+    except Exception as e:
+        print(f"❌ Error loading {model_name}: {e}")
+        print("💡 Try downloading the model again")
+        return None, None
+
+def init_movenet():
+    """Initialize the MoveNet model from local cache"""
+    global _movenet, _input_size
+    
+    if _movenet is not None:
+        return _movenet, _input_size
+    
+    try:
+        # Try to load from cache first
+        _movenet, _input_size = load_movenet_from_cache('movenet_thunder')
+        
+        if _movenet is None:
+            print("❌ Failed to load from cache, falling back to TensorFlow Hub...")
+            # Fallback to TensorFlow Hub if cache loading fails
+            import tensorflow_hub as hub
+            model_url = "https://tfhub.dev/google/movenet/singlepose/thunder/4"
+            module = hub.load(model_url)
+            
+            def movenet_wrapper(input_image):
+                """Runs MoveNet on an input image."""
+                model = module.signatures['serving_default']
+                input_image = tf.cast(input_image, dtype=tf.int32)
+                outputs = model(input_image)
+                keypoints_with_scores = outputs['output_0'].numpy()
+                return keypoints_with_scores
+            
+            _movenet = movenet_wrapper
+            _input_size = 256
+            print("✅ MoveNet loaded from TensorFlow Hub")
+        
         return _movenet, _input_size
         
     except Exception as e:
-        print(f"Error initializing MoveNet: {e}")
+        print(f"❌ Error initializing MoveNet: {e}")
+        print("💡 Make sure the movenet_models directory contains the downloaded model")
         return None, None
 
 class AngleSmoother:
@@ -390,112 +433,6 @@ def create_row_dict(angles, filename, frame_num):
     
     return row
 
-def engineer_features_for_single_image(row_dict, resources):
-    """Engineer features for a single image"""
-    core_angles = resources['core_angles']
-    
-    # Create DataFrame for single row
-    df = pd.DataFrame([row_dict])
-    
-    # Calculate imputation penalty
-    df['imputation_penalty'] = df[[
-        'Left Arm Imputed', 'Right Arm Imputed',
-        'Left Leg Imputed', 'Right Leg Imputed'
-    ]].sum(axis=1) * 0.2
-    
-    # Neck flex score calculation
-    df['neck_flex_degree'] = df['Neck Angle']  # Convert to flexion angle
-    df['neck_flex_score'] = 0  # Initialize
-    
-    # Apply logic from NeckREBA class
-    df.loc[df['neck_flex_degree'].between(0, 20, inclusive='left'), 'neck_flex_score'] = 1
-    df.loc[df['neck_flex_degree'].between(20, 45, inclusive='left'), 'neck_flex_score'] = 2
-    df.loc[df['neck_flex_degree'].between(45, 60, inclusive='left'), 'neck_flex_score'] = 3
-    df.loc[df['neck_flex_degree'] >= 60, 'neck_flex_score'] = 4
-    df.loc[df['neck_flex_degree'] < 0, 'neck_flex_score'] = np.where(
-        df.loc[df['neck_flex_degree'] < 0, 'neck_flex_degree'] >= -20, 2, 3
-    )
-
-    # Trunk flex score calculation
-    df['trunk_flex_score'] = 0  # Initialize
-    waist_angle = df['Waist Angle']
-
-    # Forward flexion cases (positive angle)
-    df.loc[waist_angle.between(0, 5, inclusive='both'), 'trunk_flex_score'] = 1
-    df.loc[waist_angle.between(5, 20, inclusive='right'), 'trunk_flex_score'] = 2
-    df.loc[waist_angle.between(20, 60, inclusive='right'), 'trunk_flex_score'] = 3
-    df.loc[waist_angle.between(60, 90, inclusive='right'), 'trunk_flex_score'] = 4
-    df.loc[waist_angle.between(90, 120, inclusive='right'), 'trunk_flex_score'] = 5
-    df.loc[waist_angle > 120, 'trunk_flex_score'] = 6
-
-    # Extension cases (negative angle)
-    abs_ext_angle = np.abs(df.loc[waist_angle < 0, 'Waist Angle'])
-    df.loc[waist_angle < 0, 'trunk_flex_score'] = np.where(
-        abs_ext_angle <= 5, 1,
-        np.where(abs_ext_angle <= 20, 2,
-                 np.where(abs_ext_angle < 45, 3, 4))
-    )
-
-    # Upper arm score calculation using UpperArmREBA logic
-    df['max_upper_arm_angle'] = df[['Left Upper Arm Angle', 'Right Upper Arm Angle']].abs().max(axis=1)
-    df['upper_arm_score'] = 0  # Initialize
-
-    df.loc[df['max_upper_arm_angle'].between(-20, 20, inclusive='left'), 'upper_arm_score'] = 1
-    df.loc[df['max_upper_arm_angle'].between(20, 45, inclusive='left'), 'upper_arm_score'] = 2
-    df.loc[(df['max_upper_arm_angle'] < -20) | 
-           (df['max_upper_arm_angle'].between(45, 90, inclusive='left')), 'upper_arm_score'] = 3
-    df.loc[df['max_upper_arm_angle'] >= 90, 'upper_arm_score'] = 4
-
-    # Lower arm score calculation using LAREBA logic
-    def score_lower_arm(angle):
-        return 1 if 60 <= angle < 100 else 2
-
-    df['left_lower_arm_score'] = df['Left Lower Arm Angle'].apply(score_lower_arm)
-    df['right_lower_arm_score'] = df['Right Lower Arm Angle'].apply(score_lower_arm)
-    df['lower_arm_score'] = df[['left_lower_arm_score', 'right_lower_arm_score']].max(axis=1)
-
-    # Leg score calculation
-    def calc_leg_deviation(angle):
-        return min(abs(angle - 90), abs(angle - 110))
-
-    df['left_leg_deviation'] = df['Left Leg Angle'].apply(calc_leg_deviation)
-    df['right_leg_deviation'] = df['Right Leg Angle'].apply(calc_leg_deviation)
-    df['max_leg_deviation'] = df[['left_leg_deviation', 'right_leg_deviation']].max(axis=1)
-
-    df['leg_score'] = 1  # Initialize
-    df.loc[df['max_leg_deviation'].between(0, 20, inclusive='right'), 'leg_score'] = 2
-    df.loc[df['max_leg_deviation'].between(20, 40, inclusive='right'), 'leg_score'] = 3
-    df.loc[df['max_leg_deviation'] > 40, 'leg_score'] = 4
-    
-    # Simplified Activity Score (for images, set to default)
-    df['static_posture'] = 1  # Assume static for single image
-    df['rapid_movement'] = 0  # No movement in a single image
-    df['activity_score'] = 1  # Default for static posture
-    
-    # Set all temporal features to 0 for single image
-    df['Neck Angle_volatility_1s'] = 0
-    df['Waist Angle_volatility_1s'] = 0
-    df['Neck Angle_stability_2s'] = 0
-    df['Waist Angle_stability_2s'] = 0
-    df['neck_awkward_time_5s'] = 0
-    df['trunk_awkward_time_5s'] = 0
-    
-    # Posture Symmetry
-    df['arm_asymmetry'] = np.abs(df['Left Upper Arm Angle'] - df['Right Upper Arm Angle'])
-    df['leg_asymmetry'] = np.abs(df['Left Leg Angle'] - df['Right Leg Angle'])
-    
-    # Return only the features needed for prediction
-    features_dict = df[resources['model_features']].iloc[0].to_dict()
-    component_scores = {
-        'trunk_score': int(df['trunk_flex_score'].iloc[0]),
-        'neck_score': int(df['neck_flex_score'].iloc[0]),
-        'upper_arm_score': int(df['upper_arm_score'].iloc[0]),
-        'lower_arm_score': int(df['lower_arm_score'].iloc[0]),
-        'leg_score': int(df['leg_score'].iloc[0])
-    }
-    
-    return features_dict, component_scores
-
 def process_pose_from_bytes(image_bytes, output_visualization=True):
     """
     Process an image from bytes, detect pose, and generate predictions
@@ -540,7 +477,8 @@ def process_pose_from_bytes(image_bytes, output_visualization=True):
         filename = f"image_{datetime.now().strftime('%Y%m%d%H%M%S')}"
         row_dict = create_row_dict(angles, filename, 0)
         
-        # Engineer features
+        # Engineer features and predict using the updated pipeline
+        from app.services.ergonomic_model import engineer_features_for_single_image
         features, component_scores = engineer_features_for_single_image(row_dict, resources)
         
         # Make prediction
