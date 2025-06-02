@@ -135,10 +135,11 @@ if [ ! -d "TA_Deployment" ]; then
 else
     echo "Repository already exists"
 fi
-cd TA_Deployment
+
 echo "======================================================"
 echo "Installation complete!"
 echo "Python version: $(python3 --version)"
 echo "SSL test: $(python3 -c 'import ssl; print("SSL working!")' 2>/dev/null || echo 'SSL failed')"
 echo "You can now start the server by running: python3 run.py"
 echo "The server will be available at http://localhost:5050"
+cd TA_Deployment
