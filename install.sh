@@ -34,11 +34,13 @@ if [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 9 ]; then
         python3.9 \
         python3.9-dev \
         python3.9-distutils \
-        python3.9-venv
+        python3.9-venv \
+        libssl-dev \
+        libffi-dev
     
-    # Install pip for Python 3.9
-    curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py
-    sudo python3.9 get-pip.py
+    # Install pip for Python 3.9 with SSL fix
+    wget https://bootstrap.pypa.io/get-pip.py --no-check-certificate
+    sudo python3.9 get-pip.py --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org
     rm get-pip.py
     
     # Set Python 3.9 as the default python3
@@ -78,11 +80,11 @@ sudo apt-get install -y --no-install-recommends \
 
 # Setup Python environment
 echo "[4/8] Setting up Python environment..."
-python3 -m pip install --upgrade pip setuptools wheel --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org
+python3 -m pip install --upgrade pip setuptools wheel --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org --no-check-certificate
 
 # Install Python dependencies
 echo "[5/8] Installing Python dependencies..."
-python3 -m pip install --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org \
+python3 -m pip install --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org --no-check-certificate \
     flask \
     flask-socketio \
     flask-cors \
