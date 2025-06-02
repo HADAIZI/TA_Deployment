@@ -135,7 +135,7 @@ if [ ! -d "TA_Deployment" ]; then
 else
     echo "Repository already exists"
 fi
-
+cd TA_Deployment
 echo "======================================================"
 echo "Installation complete!"
 echo "Python version: $(python3 --version)"
