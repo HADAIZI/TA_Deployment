@@ -63,4 +63,4 @@ git clone https://github.com/HADAIZI/TA_Deployment.git
 echo "======================================================"
 echo "Installation complete!"
 echo "You can now start the server by running: python3 run.py"
-echo "The server will be available at http://localhost:5000"
+echo "The server will be available at http://localhost:5050"
