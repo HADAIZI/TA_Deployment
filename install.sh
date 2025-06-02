@@ -83,6 +83,7 @@ echo "Using Python version: $NEW_PYTHON_VERSION"
 # Test SSL support
 echo "[8/10] Testing SSL support..."
 python3 -c "import ssl; print('SSL support: OK')" || echo "SSL support: FAILED"
+cd ~
 
 # Install system dependencies
 echo "[9/10] Installing system dependencies..."
