@@ -13,6 +13,7 @@ from app.services.ergonomic_model import get_model_resources, engineer_features_
 from app.services.ergonomic_model import get_risk_level, generate_feedback
 from app.services.job_manager import update_job
 from app.utils.summarize_results import summarize_results
+from app.services.temporal_video_processor import enhance_resources_with_temporal_model, enhance_video_segment_processing
 
 # Constants
 FRAME_INTERVAL = 3  # Process every Nth frame
@@ -302,11 +303,8 @@ def process_video_segment(cap, movenet, input_size, resources, start_frame, end_
         if processed_count == 0:
             return None
     
-    # Create results for each frame using updated pipeline
-    results = create_frame_results(all_rows, resources)
-    
     # Summarize segment results
-    summary = summarize_results(results)
+    summary = enhance_video_segment_processing(all_rows, resources, processed_count)
     
     # Add segment-specific info
     summary['processed_frames'] = processed_count
@@ -346,7 +344,7 @@ def process_video(job_folder, job_id, video_path, segment_duration_minutes=None)
         resources = get_model_resources()
         if resources is None:
             raise ValueError("Could not load model resources")
-            
+        resources = enhance_resources_with_temporal_model(resources)   
         # Open video
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():

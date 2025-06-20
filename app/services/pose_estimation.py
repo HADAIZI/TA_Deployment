@@ -24,7 +24,7 @@ KEYPOINT_DICT = {
     'left_knee': 13, 'right_knee': 14, 'left_ankle': 15, 'right_ankle': 16
 }
 
-def load_movenet_from_cache(model_name="movenet_thunder", cache_dir="movenet_models"):
+def load_movenet_from_cache(model_name="movenet_lightning", cache_dir="movenet_models"):
     """Load MoveNet from local cache directory"""
     cache_path = Path(cache_dir)
     model_path = cache_path / model_name
@@ -68,7 +68,7 @@ def init_movenet():
     
     try:
         # Try to load from cache first
-        _movenet, _input_size = load_movenet_from_cache('movenet_thunder')
+        _movenet, _input_size = load_movenet_from_cache('movenet_lightning', 'movenet_models')
         
         if _movenet is None:
             print("❌ Failed to load from cache, falling back to TensorFlow Hub...")
@@ -249,7 +249,7 @@ def calculate_angle_with_fallback(a_name, b_name, c_name, angle_name, validated_
 
 def get_joint_angles(keypoints_with_scores, keypoint_threshold=KEYPOINT_THRESHOLD):
     """
-    Calculate joint angles from pose keypoints
+    Calculate joint angles from pose keypoints with enhanced debugging
     
     Args:
         keypoints_with_scores: Output from MoveNet model
@@ -301,17 +301,42 @@ def get_joint_angles(keypoints_with_scores, keypoint_threshold=KEYPOINT_THRESHOL
         validated_keypoints[name] = {
             'x': keypoints[idx][1] if scores[idx] > keypoint_threshold else None,
             'y': keypoints[idx][0] if scores[idx] > keypoint_threshold else None,
-            'valid': scores[idx] > keypoint_threshold
+            'valid': scores[idx] > keypoint_threshold,
+            'confidence': float(scores[idx])  # Add confidence for debugging
         }
 
     # Calculate all angles with fallback
     angles = {}
     
-    # Calculate waist angle (with forward/backward detection)
+    # === WAIST ANGLE CALCULATION WITH DEBUGGING ===
     shoulder_left = get_keypoint_if_valid(validated_keypoints, 'left_shoulder')
     shoulder_right = get_keypoint_if_valid(validated_keypoints, 'right_shoulder')
     hip_left = get_keypoint_if_valid(validated_keypoints, 'left_hip')
     hip_right = get_keypoint_if_valid(validated_keypoints, 'right_hip')
+    
+    # Track which keypoints are missing for waist calculation
+    waist_missing_keypoints = []
+    waist_keypoint_confidences = {}
+    
+    if shoulder_left is None:
+        waist_missing_keypoints.append('left_shoulder')
+    else:
+        waist_keypoint_confidences['left_shoulder'] = validated_keypoints['left_shoulder']['confidence']
+        
+    if shoulder_right is None:
+        waist_missing_keypoints.append('right_shoulder')
+    else:
+        waist_keypoint_confidences['right_shoulder'] = validated_keypoints['right_shoulder']['confidence']
+        
+    if hip_left is None:
+        waist_missing_keypoints.append('left_hip')
+    else:
+        waist_keypoint_confidences['left_hip'] = validated_keypoints['left_hip']['confidence']
+        
+    if hip_right is None:
+        waist_missing_keypoints.append('right_hip')
+    else:
+        waist_keypoint_confidences['right_hip'] = validated_keypoints['right_hip']['confidence']
     
     if all([shoulder_left, shoulder_right, hip_left, hip_right]):
         # Original angle calculation
@@ -349,11 +374,35 @@ def get_joint_angles(keypoints_with_scores, keypoint_threshold=KEYPOINT_THRESHOL
         angles['waist'] = neutral_angles['waist']
         imputed_angles['waist'] = True
 
-    # Calculate neck angle using ear instead of nose
-    # Try left ear first, then right ear if left isn't available
+    # === NECK ANGLE CALCULATION WITH DEBUGGING ===
     ear_point = get_keypoint_if_valid(validated_keypoints, 'left_ear')
+    neck_missing_keypoints = []
+    neck_keypoint_confidences = {}
+    
+    # Check left ear
     if ear_point is None:
+        neck_missing_keypoints.append('left_ear')
+        # Try right ear
         ear_point = get_keypoint_if_valid(validated_keypoints, 'right_ear')
+        if ear_point is None:
+            neck_missing_keypoints.append('right_ear')
+        else:
+            neck_keypoint_confidences['right_ear'] = validated_keypoints['right_ear']['confidence']
+    else:
+        neck_keypoint_confidences['left_ear'] = validated_keypoints['left_ear']['confidence']
+    
+    # Check shoulders for neck calculation
+    if shoulder_left is None:
+        if 'left_shoulder' not in neck_missing_keypoints:
+            neck_missing_keypoints.append('left_shoulder')
+    else:
+        neck_keypoint_confidences['left_shoulder'] = validated_keypoints['left_shoulder']['confidence']
+        
+    if shoulder_right is None:
+        if 'right_shoulder' not in neck_missing_keypoints:
+            neck_missing_keypoints.append('right_shoulder')
+    else:
+        neck_keypoint_confidences['right_shoulder'] = validated_keypoints['right_shoulder']['confidence']
     
     if ear_point is not None and shoulder_left is not None and shoulder_right is not None:
         # Calculate midpoint between shoulders
@@ -375,7 +424,7 @@ def get_joint_angles(keypoints_with_scores, keypoint_threshold=KEYPOINT_THRESHOL
         angles['neck'] = neutral_angles['neck']
         imputed_angles['neck'] = True
 
-    # Calculate other angles
+    # Calculate other angles (unchanged)
     angle_mapping = {
         'left_upper_arm': ('left_hip', 'left_shoulder', 'left_elbow'),
         'right_upper_arm': ('right_hip', 'right_shoulder', 'right_elbow'),
@@ -395,13 +444,43 @@ def get_joint_angles(keypoints_with_scores, keypoint_threshold=KEYPOINT_THRESHOL
         if angle_name in get_joint_angles.smoothers:
             angles[angle_name] = get_joint_angles.smoothers[angle_name].smooth(angles[angle_name])
 
-    # Check if we have minimum required angles (neck + waist + at least one other)
+    # === ENHANCED DEBUGGING FOR MISSING ANGLES ===
     has_minimum_angles = not imputed_angles['neck'] and not imputed_angles['waist']
     
+    if not has_minimum_angles:
+        missing_angles = []
+        debug_info = []
+        
+        if imputed_angles['neck']:
+            missing_angles.append("neck")
+            if neck_missing_keypoints:
+                # Get confidence values for missing neck keypoints
+                neck_low_conf = []
+                for kp in neck_missing_keypoints:
+                    conf = validated_keypoints[kp]['confidence']
+                    neck_low_conf.append(f"{kp}:{conf:.3f}")
+                debug_info.append(f"NECK missing keypoints: {', '.join(neck_low_conf)}")
+        
+        if imputed_angles['waist']:
+            missing_angles.append("waist")
+            if waist_missing_keypoints:
+                # Get confidence values for missing waist keypoints
+                waist_low_conf = []
+                for kp in waist_missing_keypoints:
+                    conf = validated_keypoints[kp]['confidence']
+                    waist_low_conf.append(f"{kp}:{conf:.3f}")
+                debug_info.append(f"WAIST missing keypoints: {', '.join(waist_low_conf)}")
+        
+        print(f"Skipping frame - Missing angles: {', '.join(missing_angles)}")
+        for info in debug_info:
+            print(f"  {info}")
+        
+        return None
+
     # Also store imputation information
     angles['imputed_angles'] = imputed_angles
     
-    return angles if has_minimum_angles else None
+    return angles
 
 def create_row_dict(angles, filename, frame_num):
     """Create a dictionary representing one row of data"""

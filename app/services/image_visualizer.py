@@ -2,7 +2,7 @@ import os
 import cv2
 import numpy as np
 import matplotlib
-matplotlib.use('Agg')  # Force non-interactive backend
+matplotlib.use('Agg')  
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from datetime import datetime
@@ -17,14 +17,22 @@ KEYPOINT_DICT = {
     'left_knee': 13, 'right_knee': 14, 'left_ankle': 15, 'right_ankle': 16
 }
 
-# Edge colors for visualization
+# FIXED: Edge colors for visualization - NOW INCLUDING LEGS
 KEYPOINT_EDGE_INDS_TO_COLOR = {
-    (5, 3): 'r', (6, 4): 'r', (5, 7): 'b', (7, 9): 'b', (6, 8): 'b', (8, 10): 'b',
-    (5, 6): 'b', (5, 11): 'orange', (6, 12): 'orange', (7, 5): 'g', (7, 9): 'g',
-    (8, 6): 'g', (8, 10): 'g', (11, 13): 'purple', (13, 15): 'purple', (12, 14): 'purple', (14, 16): 'purple'
+    # Head connections
+    (5, 3): 'r', (6, 4): 'r', 
+    # Arms
+    (5, 7): 'b', (7, 9): 'b', (6, 8): 'b', (8, 10): 'b',
+    # Torso
+    (5, 6): 'b', (5, 11): 'orange', (6, 12): 'orange', 
+    # Hip connection
+    (11, 12): 'orange',
+    # FIXED: Legs - These were missing!
+    (11, 13): 'purple', (13, 15): 'purple',  # Left leg
+    (12, 14): 'purple', (14, 16): 'purple'   # Right leg
 }
 
-# Risk level colors
+# Risk level colors - ADDED LEG COLORS
 RISK_COLORS = {
     'trunk': {
         1: '#00FF00', 2: '#FFFF00', 3: '#FFA500', 
@@ -38,6 +46,10 @@ RISK_COLORS = {
     },
     'lower_arm': {
         1: '#00FF00', 2: '#FF0000'
+    },
+    # ADDED: Leg colors (using similar scheme to arms)
+    'leg': {
+        1: '#00FF00', 2: '#FFFF00', 3: '#FFA500', 4: '#FF0000'
     }
 }
 
@@ -81,7 +93,9 @@ def check_imputed_joints(angle_values):
             'left_upper_arm': imputed_info.get('left_upper_arm', False),
             'right_upper_arm': imputed_info.get('right_upper_arm', False),
             'left_lower_arm': imputed_info.get('left_lower_arm', False),
-            'right_lower_arm': imputed_info.get('right_lower_arm', False)
+            'right_lower_arm': imputed_info.get('right_lower_arm', False),
+            'left_leg': imputed_info.get('left_leg', False),
+            'right_leg': imputed_info.get('right_leg', False)
         }
     else:
         # Fallback: check for standard angle values that indicate imputation
@@ -91,7 +105,9 @@ def check_imputed_joints(angle_values):
             'left_upper_arm': angle_values.get('left_upper_arm', 0) == 0,
             'right_upper_arm': angle_values.get('right_upper_arm', 0) == 0,
             'left_lower_arm': angle_values.get('left_lower_arm', 0) == 90,
-            'right_lower_arm': angle_values.get('right_lower_arm', 0) == 90
+            'right_lower_arm': angle_values.get('right_lower_arm', 0) == 90,
+            'left_leg': angle_values.get('left_leg', 0) == 90,
+            'right_leg': angle_values.get('right_leg', 0) == 90
         }
     
     return imputed_joints
@@ -100,13 +116,8 @@ def generate_pose_visualization(image, keypoints_with_scores, risk_scores, origi
                                flip_applied=False, crop_region=None, output_image_height=None,
                                angle_values=None):
     """Draws keypoint predictions with risk level coloring and imputation indicators"""
-    # Use original image if flip was applied
-    vis_image = original_image if flip_applied else image
-    
-    if flip_applied:
-        # Flip the keypoints back to match the flipped image
-        width = vis_image.shape[1]
-        keypoints_with_scores[0, 0, :, 1] = 1 - keypoints_with_scores[0, 0, :, 1]
+   
+    vis_image = image
 
     height, width, _ = vis_image.shape
     aspect_ratio = float(width) / height
@@ -127,14 +138,19 @@ def generate_pose_visualization(image, keypoints_with_scores, risk_scores, origi
     if angle_values:
         imputed_joints = check_imputed_joints(angle_values)
     
-    # Define the body segments and their risk types
+    # FIXED: Define the body segments and their risk types - LEGS USE WHITE (NOT ASSESSED)
     risk_segments = {
         ((3, 5), (4, 6)): ('neck', imputed_joints.get('neck', False)),  
         ((5, 11), (6, 12)): ('trunk', imputed_joints.get('trunk', False)),
         ((5, 7),): ('upper_arm', imputed_joints.get('left_upper_arm', False)),
         ((6, 8),): ('upper_arm', imputed_joints.get('right_upper_arm', False)),
         ((7, 9),): ('lower_arm', imputed_joints.get('left_lower_arm', False)),
-        ((8, 10),): ('lower_arm', imputed_joints.get('right_lower_arm', False))
+        ((8, 10),): ('lower_arm', imputed_joints.get('right_lower_arm', False)),
+        # ADDED: Leg segments - ALWAYS WHITE (not assessed per expert recommendation)
+        ((11, 13),): ('leg_white', False),   # Left thigh - always white
+        ((13, 15),): ('leg_white', False),   # Left shin - always white
+        ((12, 14),): ('leg_white', False),   # Right thigh - always white
+        ((14, 16),): ('leg_white', False)    # Right shin - always white
     }
     
     # Draw connection between shoulders
@@ -148,10 +164,23 @@ def generate_pose_visualization(image, keypoints_with_scores, risk_scores, origi
         shoulder_line = plt.Line2D([x1, x2], [y1, y2], lw=3, color='blue', zorder=2)
         ax.add_line(shoulder_line)
     
-    # Draw edges with risk-based coloring or white for imputed
+    # ADDED: Draw connection between hips
+    if (keypoints_with_scores[0, 0, 11, 2] > KEYPOINT_THRESHOLD and 
+        keypoints_with_scores[0, 0, 12, 2] > KEYPOINT_THRESHOLD):
+        x1 = keypoints_with_scores[0, 0, 11, 1] * width
+        y1 = keypoints_with_scores[0, 0, 11, 0] * height
+        x2 = keypoints_with_scores[0, 0, 12, 1] * width
+        y2 = keypoints_with_scores[0, 0, 12, 0] * height
+        
+        hip_line = plt.Line2D([x1, x2], [y1, y2], lw=3, color='orange', zorder=2)
+        ax.add_line(hip_line)
+    
+    # Draw edges with risk-based coloring or white for imputed/legs
     for segment_pairs, (risk_type, is_imputed) in risk_segments.items():
         if is_imputed:
             color = 'white'
+        elif risk_type == 'leg_white':
+            color = 'white'  # Legs always white (not assessed)
         else:
             risk_level = risk_scores.get(f'{risk_type}_score', 1)
             color = RISK_COLORS[risk_type].get(risk_level, 'gray')
@@ -198,7 +227,7 @@ def generate_pose_visualization(image, keypoints_with_scores, risk_scores, origi
         ax.text(width * 0.05, height * 0.05, text, fontsize=18, 
                 color='white', bbox=dict(facecolor=reba_color, alpha=0.8))
     
-    # Add risk legend
+    # UPDATED: Add risk legend - NOW INCLUDING LEGS
     legend_y = height * 0.95
     ax.text(width * 0.05, legend_y, "Skor REBA per Bagian:", fontsize=14, color='black', 
             bbox=dict(facecolor='white', alpha=0.8))
@@ -207,15 +236,19 @@ def generate_pose_visualization(image, keypoints_with_scores, risk_scores, origi
         ("Leher", risk_scores.get('neck_score', 1), 'neck'),
         ("Batang Tubuh", risk_scores.get('trunk_score', 1), 'trunk'),
         ("Lengan Atas", risk_scores.get('upper_arm_score', 1), 'upper_arm'),
-        ("Lengan Bawah", risk_scores.get('lower_arm_score', 1), 'lower_arm')
+        ("Lengan Bawah", risk_scores.get('lower_arm_score', 1), 'lower_arm'),
+        ("Kaki", "Tidak Dinilai", 'leg_white')  
     ]
     
     y_offset = 0.05
     for i, (name, level, risk_type) in enumerate(legend_items):
         y_pos = legend_y - (i+1) * height * y_offset
-        color = RISK_COLORS[risk_type].get(level, 'gray')
+        if risk_type == 'leg_white':
+            color = 'white'  # Legs always white
+        else:
+            color = RISK_COLORS[risk_type].get(level, 'gray')
         ax.text(width * 0.07, y_pos, f"• {name}: {level}", fontsize=12, color='black',
-                bbox=dict(facecolor=color, alpha=0.7))
+                bbox=dict(facecolor=color, alpha=0.7, edgecolor='black' if risk_type == 'leg_white' else None))
     
     # Add imputation indicator
     if any(imputed_joints.values()):
