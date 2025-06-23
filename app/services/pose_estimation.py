@@ -515,7 +515,6 @@ def create_row_dict(angles, filename, frame_num):
 def process_pose_from_bytes(image_bytes, output_visualization=True):
     """
     Process an image from bytes, detect pose, and generate predictions
-    Using EXACT same approach as your friend (with debugging)
     
     Args:
         image_bytes: Image data as bytes
@@ -525,8 +524,6 @@ def process_pose_from_bytes(image_bytes, output_visualization=True):
         dict: Results including REBA score, risk level, component scores, etc.
     """
     try:
-        print(f"[DEBUG] Starting process_pose_from_bytes, output_visualization={output_visualization}")
-        
         # Initialize MoveNet
         movenet, input_size = init_movenet()
         if movenet is None:
@@ -575,82 +572,33 @@ def process_pose_from_bytes(image_bytes, output_visualization=True):
         visualization_path = None
         web_link = None
         
-        print(f"[DEBUG] About to check output_visualization: {output_visualization}")
-        
         if output_visualization:
-            print(f"[DEBUG] Inside visualization block")
-            
-            # Create output directory - EXACTLY like your friend
+            # Create output directory
             date_str = datetime.now().strftime("%Y-%m-%d")
             folder_path = os.path.join("output_images", date_str)
-            
-            print(f"[DEBUG] Date string: {date_str}")
-            print(f"[DEBUG] Folder path: {folder_path}")
-            print(f"[DEBUG] Current working directory: {os.getcwd()}")
-            
             os.makedirs(folder_path, exist_ok=True)
-            print(f"[DEBUG] Created directory: {folder_path}")
-            print(f"[DEBUG] Directory exists: {os.path.exists(folder_path)}")
-            print(f"[DEBUG] Directory is writable: {os.access(folder_path, os.W_OK)}")
             
-         
+            # Generate filename
             filename_web = datetime.now().strftime("%H%M%S_%f") + "_hasil.png"
             filepath = os.path.join(folder_path, filename_web)
             
-            print(f"[DEBUG] Generated filename: {filename_web}")
-            print(f"[DEBUG] Full filepath: {filepath}")
-            print(f"[DEBUG] Absolute filepath: {os.path.abspath(filepath)}")
-            
             # Generate and save visualization
-            print(f"[DEBUG] Generating visualization...")
             visualization = generate_pose_visualization(
                 processed_img, keypoints, component_scores, original_img, flip_required
             )
-            print(f"[DEBUG] Visualization generated, shape: {visualization.shape}")
- 
+            
+            # Convert visualization to BGR for saving
             img = cv2.cvtColor(visualization, cv2.COLOR_RGB2BGR)
-            print(f"[DEBUG] Converted to BGR, shape: {img.shape}")
             
-     
-            print(f"[DEBUG] About to save image with cv2.imwrite...")
-            success = cv2.imwrite(filepath, img)
+            # Save image
+            cv2.imwrite(filepath, img)
             
-            print(f"[DEBUG] cv2.imwrite success: {success}")
-            print(f"[DEBUG] File saved to: {filepath}")
-            print(f"[DEBUG] File exists after save: {os.path.exists(filepath)}")
-            
-            if os.path.exists(filepath):
-                file_size = os.path.getsize(filepath)
-                print(f"[DEBUG] File size: {file_size} bytes")
-                
-                # List files in the directory
-                dir_path = os.path.dirname(filepath)
-                if os.path.exists(dir_path):
-                    files_in_dir = os.listdir(dir_path)
-                    print(f"[DEBUG] Files in {dir_path}: {files_in_dir}")
-                    
-                    # Check file permissions
-                    print(f"[DEBUG] File permissions: {oct(os.stat(filepath).st_mode)[-3:]}")
-                else:
-                    print(f"[DEBUG] Directory {dir_path} does not exist after save!")
-            else:
-                print(f"[DEBUG] ❌ FILE NOT FOUND AFTER SAVE!")
-                
-                
-                print(f"[DEBUG] Parent directory exists: {os.path.exists(os.path.dirname(filepath))}")
-                print(f"[DEBUG] Parent directory contents: {os.listdir(os.path.dirname(filepath)) if os.path.exists(os.path.dirname(filepath)) else 'Not found'}")
-            
- 
-            print(f"[DEBUG] Creating web link...")
-            link_image = "https://vps.danar.site/model2/" + filepath.replace("\\", "/")
-            print(f"[DEBUG] Generated web link: {link_image}")
+            # Create web link using /model2/ route
+            relative_path = filepath.replace("output_images/", "").replace("\\", "/")
+            web_link = "https://vps.danar.site/model2/" + relative_path
             
             # Set variables for result
             visualization_path = filepath
-            web_link = link_image
-            
-        else:
-            print(f"[DEBUG] Visualization disabled")
         
         # Store actual angle values
         angle_values = {
@@ -675,20 +623,15 @@ def process_pose_from_bytes(image_bytes, output_visualization=True):
         
         # Add visualization path for internal use
         if visualization_path:
-            # Return relative path like before for internal cleanup
             result['visualization_path'] = os.path.join(date_str, os.path.basename(visualization_path))
-            print(f"[DEBUG] Added visualization_path to result: {result['visualization_path']}")
         
-     
+        # Add web link for external access
         if web_link:
             result['web_link'] = web_link
-            print(f"[DEBUG] Added web_link to result: {web_link}")
         
-        print(f"[DEBUG] Final result keys: {list(result.keys())}")
         return result
         
     except Exception as e:
-        print(f"[DEBUG] ERROR in process_pose_from_bytes: {str(e)}")
         print(f"Error processing image: {str(e)}")
         import traceback
         traceback.print_exc()

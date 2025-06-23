@@ -12,7 +12,7 @@ ergonomic_bp = Blueprint('ergonomic', __name__)
 
 @ergonomic_bp.route('/predict/image', methods=['POST'])
 def predict_image():
-    """Endpoint for analyzing a single image - EXACT SAME AS YOUR FRIEND"""
+    """Endpoint for analyzing a single image"""
     if 'image' not in request.files:
         return jsonify({"error": "No image file provided"}), 400
 
@@ -26,7 +26,6 @@ def predict_image():
         return jsonify({"result": result})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
 
 @ergonomic_bp.route("/predict/video", methods=["POST"])
 def predict_video():
@@ -128,68 +127,115 @@ def get_video_status():
     
     return jsonify({"job_id": job_id, "status": status, "progress": progress})
 
-@ergonomic_bp.route('/model2/<path:filename>')
-def serve_model2_image(filename):
-    """Serve images via model2 path - like your friend's model1"""
-    directory = os.path.join(os.getcwd(), 'output_images')
-    return send_from_directory(directory, filename, mimetype='image/png')
-
-# Keep your existing route too:
 @ergonomic_bp.route('/output_images/<path:filename>')
 def serve_output_image(filename):
-    """Serve output images with debugging"""
-    print(f"[DEBUG ROUTE] Requested filename: {filename}")
-    print(f"[DEBUG ROUTE] Current working directory: {os.getcwd()}")
-    
+    """Serve output images with proper nested path handling"""
     try:
-        base_directory = 'output_images'
-        full_path = os.path.join(base_directory, filename)
-        abs_path = os.path.abspath(full_path)
+        print(f"[DEBUG] Requested filename: {filename}")
         
-        print(f"[DEBUG ROUTE] Base directory: {base_directory}")
-        print(f"[DEBUG ROUTE] Full path: {full_path}")
-        print(f"[DEBUG ROUTE] Absolute path: {abs_path}")
-        print(f"[DEBUG ROUTE] File exists: {os.path.exists(full_path)}")
-        
-        # List contents of base directory
-        if os.path.exists(base_directory):
-            contents = os.listdir(base_directory)
-            print(f"[DEBUG ROUTE] Contents of {base_directory}: {contents}")
+        # Handle nested paths properly
+        if '/' in filename:
+            # For paths like "2025-06-23/164323_285285_hasil.png"
+            path_parts = filename.split('/')
+            subdirectory = '/'.join(path_parts[:-1])  # "2025-06-23"
+            file_name = path_parts[-1]                # "164323_285285_hasil.png"
             
-            # If it's a date directory, list its contents too
-            date_part = filename.split('/')[0] if '/' in filename else None
-            if date_part and os.path.exists(os.path.join(base_directory, date_part)):
-                date_contents = os.listdir(os.path.join(base_directory, date_part))
-                print(f"[DEBUG ROUTE] Contents of {date_part}: {date_contents}")
+            # Serve from the specific subdirectory
+            directory = os.path.join('output_images', subdirectory)
+            
+            print(f"[DEBUG] Subdirectory: {subdirectory}")
+            print(f"[DEBUG] File name: {file_name}")
+            print(f"[DEBUG] Directory: {directory}")
+            print(f"[DEBUG] Directory exists: {os.path.exists(directory)}")
+            
+            if not os.path.exists(directory):
+                return jsonify({"error": f"Directory not found: {directory}"}), 404
+            
+            file_path = os.path.join(directory, file_name)
+            if not os.path.exists(file_path):
+                return jsonify({"error": f"File not found: {file_path}"}), 404
+            
+            return send_from_directory(directory, file_name, mimetype='image/png')
         else:
-            print(f"[DEBUG ROUTE] Base directory {base_directory} does not exist!")
-        
-        # Try to serve the file
-        return send_from_directory(base_directory, filename, mimetype='image/png')
-        
-    except FileNotFoundError as e:
-        print(f"[DEBUG ROUTE] FileNotFoundError: {e}")
-        return jsonify({"error": "File not found", "filename": filename, "path": full_path}), 404
+            # For direct files in output_images root
+            return send_from_directory('output_images', filename, mimetype='image/png')
+            
     except Exception as e:
-        print(f"[DEBUG ROUTE] Exception: {e}")
+        print(f"[DEBUG] Exception in serve_output_image: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-    
-@ergonomic_bp.route('/debug/test-file')
-def test_file_serving():
-    """Test if file serving works at all"""
+
+@ergonomic_bp.route('/model2/<path:filename>')
+def serve_model2_image(filename):
+    """Serve model2 images - clean version"""
     try:
-        # Create a simple test file
-        test_dir = "output_images/test"
-        os.makedirs(test_dir, exist_ok=True)
-        test_file = os.path.join(test_dir, "test.txt")
+        print(f"[DEBUG MODEL2] Requested filename: {filename}")
         
-        with open(test_file, 'w') as f:
-            f.write("Hello World!")
-        
-        print(f"[DEBUG TEST] Created test file: {test_file}")
-        print(f"[DEBUG TEST] File exists: {os.path.exists(test_file)}")
-        
-        return send_from_directory("output_images", "test/test.txt", mimetype='text/plain')
-        
+        # filename will be like "2025-06-23/164323_285285_hasil.png"
+        if '/' in filename:
+            path_parts = filename.split('/')
+            subdirectory = '/'.join(path_parts[:-1])  # "2025-06-23"
+            file_name = path_parts[-1]                # "164323_285285_hasil.png"
+            
+            directory = os.path.join('output_images', subdirectory)
+            
+            print(f"[DEBUG MODEL2] Subdirectory: {subdirectory}")
+            print(f"[DEBUG MODEL2] File name: {file_name}")
+            print(f"[DEBUG MODEL2] Directory: {directory}")
+            
+            if not os.path.exists(directory):
+                return jsonify({"error": f"Directory not found: {directory}"}), 404
+            
+            file_path = os.path.join(directory, file_name)
+            if not os.path.exists(file_path):
+                return jsonify({"error": f"File not found: {file_path}"}), 404
+            
+            return send_from_directory(directory, file_name, mimetype='image/png')
+        else:
+            # Direct file in output_images root
+            return send_from_directory('output_images', filename, mimetype='image/png')
+            
     except Exception as e:
+        print(f"[DEBUG MODEL2] Exception: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+# DEBUG ROUTES (Remove these in production)
+@ergonomic_bp.route('/debug/files')
+def debug_files():
+    """Debug route to check file structure"""
+    import os
+    debug_info = {
+        "current_working_directory": os.getcwd(),
+        "output_images_exists": os.path.exists("output_images"),
+        "output_images_contents": [],
+        "today_folder": datetime.now().strftime("%Y-%m-%d"),
+        "today_folder_exists": False,
+        "today_folder_contents": []
+    }
+    
+    # Check output_images directory
+    if os.path.exists("output_images"):
+        try:
+            debug_info["output_images_contents"] = os.listdir("output_images")
+        except Exception as e:
+            debug_info["output_images_error"] = str(e)
+    
+    # Check today's folder
+    today_path = os.path.join("output_images", debug_info["today_folder"])
+    debug_info["today_folder_exists"] = os.path.exists(today_path)
+    
+    if os.path.exists(today_path):
+        try:
+            debug_info["today_folder_contents"] = os.listdir(today_path)
+        except Exception as e:
+            debug_info["today_folder_error"] = str(e)
+    
+    # Check a specific recent file (you can update this with your actual filename)
+    test_file = "output_images/2025-06-23/164323_285285_hasil.png"
+    debug_info["test_file_exists"] = os.path.exists(test_file)
+    debug_info["test_file_path"] = os.path.abspath(test_file) if os.path.exists(test_file) else "Not found"
+    
+    return jsonify(debug_info)
