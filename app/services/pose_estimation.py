@@ -570,6 +570,8 @@ def process_pose_from_bytes(image_bytes, output_visualization=True):
         component_scores['reba_score'] = reba_score
         
         visualization_path = None
+        web_link = None  # Add web link variable
+        
         if output_visualization:
             # Create output directory if it doesn't exist
             date_str = datetime.now().strftime("%Y-%m-%d")
@@ -587,6 +589,27 @@ def process_pose_from_bytes(image_bytes, output_visualization=True):
             
             # Save visualization
             cv2.imwrite(visualization_path, cv2.cvtColor(visualization, cv2.COLOR_RGB2BGR))
+            
+            # ===== ADD WEB LINK GENERATION =====
+            from datetime import datetime
+            import os
+            
+            # Create web-accessible filename similar to your example
+            web_filename = datetime.now().strftime("%H%M%S_%f") + "_hasil.png"
+            
+            # Create web folder path (adjust this to your server setup)
+            web_folder_path = "output_images/web"  # Make sure this folder is served by your web server
+            os.makedirs(web_folder_path, exist_ok=True)
+            
+            # Full filepath for web version
+            web_filepath = os.path.join(web_folder_path, web_filename)
+            
+            # Create web link (adjust your domain/path as needed)
+            web_link = "https://vps.danar.site/model2/" + web_filename  # Adjust URL to your server
+            
+            # Save another copy for web access
+            cv2.imwrite(web_filepath, cv2.cvtColor(visualization, cv2.COLOR_RGB2BGR))
+            # ===== END OF WEB LINK GENERATION =====
         
         # Store actual angle values
         angle_values = {
@@ -609,8 +632,14 @@ def process_pose_from_bytes(image_bytes, output_visualization=True):
             'feedback': feedback
         }
         
+        # Add paths to result
         if visualization_path:
             result['visualization_path'] = os.path.join(date_str, os.path.basename(visualization_path))
+        
+        # Add web link to result
+        if web_link:
+            result['web_link'] = web_link
+            result['web_filename'] = web_filename
         
         return result
         
