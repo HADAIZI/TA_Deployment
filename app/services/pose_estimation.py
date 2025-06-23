@@ -515,7 +515,7 @@ def create_row_dict(angles, filename, frame_num):
 def process_pose_from_bytes(image_bytes, output_visualization=True):
     """
     Process an image from bytes, detect pose, and generate predictions
-    Using EXACT same approach as your friend
+    Using EXACT same approach as your friend (with URL fix)
     
     Args:
         image_bytes: Image data as bytes
@@ -594,8 +594,9 @@ def process_pose_from_bytes(image_bytes, output_visualization=True):
             # Save image - EXACTLY like your friend
             cv2.imwrite(filepath, img)
             
-            # Create web link - EXACTLY like your friend
-            link_image = "https://vps.danar.site/output_images/" + filepath.replace("\\", "/")
+            # Create web link - FIXED VERSION (no double output_images)
+            relative_path = filepath.replace("output_images/", "").replace("\\", "/")
+            link_image = "https://vps.danar.site/output_images/" + relative_path
             
             # Set variables for result
             visualization_path = filepath
