@@ -137,6 +137,12 @@ def serve_model2_image(filename):
 # Keep your existing route too:
 @ergonomic_bp.route('/output_images/<path:filename>')
 def serve_output_image(filename):
-    """Serve output images"""
-    directory = os.path.join(os.getcwd(), 'output_images')
-    return send_from_directory(directory, filename, mimetype='image/png')
+    """Serve output images - simplified version"""
+    try:
+        # Let Flask handle the nested path automatically
+        base_directory = 'output_images'  
+        return send_from_directory(base_directory, filename, mimetype='image/png')
+    except FileNotFoundError:
+        return jsonify({"error": "File not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500

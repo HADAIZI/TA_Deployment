@@ -597,6 +597,8 @@ def process_pose_from_bytes(image_bytes, output_visualization=True):
             # Create web link - Using model2 like your friend uses model1
             link_image = "https://vps.danar.site/model2/" + filepath.replace("\\", "/")
             
+            print(f"[DEBUG] Generated web_link: {link_image}")
+            
             # Set variables for result
             visualization_path = filepath
             web_link = link_image
