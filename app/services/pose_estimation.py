@@ -570,7 +570,8 @@ def process_pose_from_bytes(image_bytes, output_visualization=True):
         component_scores['reba_score'] = reba_score
         
         visualization_path = None
-        web_link = None  # Add web link variable
+        web_link = None
+        web_filename = None
         
         if output_visualization:
             # Create output directory if it doesn't exist
@@ -590,7 +591,7 @@ def process_pose_from_bytes(image_bytes, output_visualization=True):
             # Save visualization
             cv2.imwrite(visualization_path, cv2.cvtColor(visualization, cv2.COLOR_RGB2BGR))
             
-            
+            # ===== WEB LINK GENERATION =====
             # Create web-accessible filename similar to your example
             web_filename = datetime.now().strftime("%H%M%S_%f") + "_hasil.png"
             
@@ -629,7 +630,6 @@ def process_pose_from_bytes(image_bytes, output_visualization=True):
             'feedback': feedback
         }
         
-        # Add paths to result
         if visualization_path:
             result['visualization_path'] = os.path.join(date_str, os.path.basename(visualization_path))
         
