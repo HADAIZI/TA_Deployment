@@ -28,6 +28,11 @@ def predict_image():
         if 'visualization_path' in result:
             schedule_cleanup(result['visualization_path'], delay_seconds=300)  # 5 minutes
         
+        # Schedule cleanup of web image file too
+        if 'web_filename' in result:
+            web_file_path = os.path.join('output_images', 'web', result['web_filename'])
+            schedule_cleanup(web_file_path, delay_seconds=300)  # 5 minutes
+        
         return jsonify({"result": result})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -146,3 +151,28 @@ def serve_output_image(filename):
         file_name = filename
         
     return send_from_directory(directory, file_name, mimetype='image/png')
+
+# ===== NEW WEB IMAGE ENDPOINT =====
+@ergonomic_bp.route('/model2/<filename>')
+def serve_web_image(filename):
+    """Serve web-accessible images from output_images/web/ folder"""
+    try:
+        # Serve from the web folder
+        web_directory = os.path.join(os.getcwd(), 'output_images', 'web')
+        
+        # Security check - only allow certain file extensions
+        allowed_extensions = {'.png', '.jpg', '.jpeg'}
+        file_ext = os.path.splitext(filename)[1].lower()
+        
+        if file_ext not in allowed_extensions:
+            return jsonify({"error": "Invalid file type"}), 400
+        
+        # Check if file exists
+        file_path = os.path.join(web_directory, filename)
+        if not os.path.exists(file_path):
+            return jsonify({"error": "File not found"}), 404
+        
+        return send_from_directory(web_directory, filename, mimetype='image/png')
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
