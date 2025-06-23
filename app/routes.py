@@ -137,12 +137,59 @@ def serve_model2_image(filename):
 # Keep your existing route too:
 @ergonomic_bp.route('/output_images/<path:filename>')
 def serve_output_image(filename):
-    """Serve output images - simplified version"""
+    """Serve output images with debugging"""
+    print(f"[DEBUG ROUTE] Requested filename: {filename}")
+    print(f"[DEBUG ROUTE] Current working directory: {os.getcwd()}")
+    
     try:
-        # Let Flask handle the nested path automatically
-        base_directory = 'output_images'  
+        base_directory = 'output_images'
+        full_path = os.path.join(base_directory, filename)
+        abs_path = os.path.abspath(full_path)
+        
+        print(f"[DEBUG ROUTE] Base directory: {base_directory}")
+        print(f"[DEBUG ROUTE] Full path: {full_path}")
+        print(f"[DEBUG ROUTE] Absolute path: {abs_path}")
+        print(f"[DEBUG ROUTE] File exists: {os.path.exists(full_path)}")
+        
+        # List contents of base directory
+        if os.path.exists(base_directory):
+            contents = os.listdir(base_directory)
+            print(f"[DEBUG ROUTE] Contents of {base_directory}: {contents}")
+            
+            # If it's a date directory, list its contents too
+            date_part = filename.split('/')[0] if '/' in filename else None
+            if date_part and os.path.exists(os.path.join(base_directory, date_part)):
+                date_contents = os.listdir(os.path.join(base_directory, date_part))
+                print(f"[DEBUG ROUTE] Contents of {date_part}: {date_contents}")
+        else:
+            print(f"[DEBUG ROUTE] Base directory {base_directory} does not exist!")
+        
+        # Try to serve the file
         return send_from_directory(base_directory, filename, mimetype='image/png')
-    except FileNotFoundError:
-        return jsonify({"error": "File not found"}), 404
+        
+    except FileNotFoundError as e:
+        print(f"[DEBUG ROUTE] FileNotFoundError: {e}")
+        return jsonify({"error": "File not found", "filename": filename, "path": full_path}), 404
+    except Exception as e:
+        print(f"[DEBUG ROUTE] Exception: {e}")
+        return jsonify({"error": str(e)}), 500
+    
+@ergonomic_bp.route('/debug/test-file')
+def test_file_serving():
+    """Test if file serving works at all"""
+    try:
+        # Create a simple test file
+        test_dir = "output_images/test"
+        os.makedirs(test_dir, exist_ok=True)
+        test_file = os.path.join(test_dir, "test.txt")
+        
+        with open(test_file, 'w') as f:
+            f.write("Hello World!")
+        
+        print(f"[DEBUG TEST] Created test file: {test_file}")
+        print(f"[DEBUG TEST] File exists: {os.path.exists(test_file)}")
+        
+        return send_from_directory("output_images", "test/test.txt", mimetype='text/plain')
+        
     except Exception as e:
         return jsonify({"error": str(e)}), 500
