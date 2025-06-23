@@ -27,11 +27,6 @@ def predict_image():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@ergonomic_bp.route('/output_images/<path:filename>')
-def serve_output_image(filename):
-    """Serve output images - EXACT SAME AS YOUR FRIEND"""
-    directory = os.path.join(os.getcwd(), 'output_images')
-    return send_from_directory(directory, filename, mimetype='image/png')
 
 @ergonomic_bp.route("/predict/video", methods=["POST"])
 def predict_video():
@@ -132,3 +127,16 @@ def get_video_status():
     progress = 100.0 if status == "done" else 0.0
     
     return jsonify({"job_id": job_id, "status": status, "progress": progress})
+
+@ergonomic_bp.route('/model2/<path:filename>')
+def serve_model2_image(filename):
+    """Serve images via model2 path - like your friend's model1"""
+    directory = os.path.join(os.getcwd(), 'output_images')
+    return send_from_directory(directory, filename, mimetype='image/png')
+
+# Keep your existing route too:
+@ergonomic_bp.route('/output_images/<path:filename>')
+def serve_output_image(filename):
+    """Serve output images"""
+    directory = os.path.join(os.getcwd(), 'output_images')
+    return send_from_directory(directory, filename, mimetype='image/png')
