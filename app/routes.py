@@ -170,3 +170,94 @@ def serve_output_image(filename):
 def serve_model2_image(filename):
     directory = os.path.join(os.getcwd(), 'output_images')
     return send_from_directory(directory, filename, mimetype='image/png')
+
+@ergonomic_bp.route('/debug/check/<path:filename>')
+def debug_check_file(filename):
+    """Debug specific file access"""
+    import os
+    
+    debug_info = {
+        "requested_filename": filename,
+        "current_working_directory": os.getcwd(),
+        "absolute_cwd": os.path.abspath(os.getcwd())
+    }
+    
+    # Check the exact file path
+    full_path = os.path.join('output_images', filename)
+    absolute_path = os.path.abspath(full_path)
+    
+    debug_info.update({
+        "full_path": full_path,
+        "absolute_path": absolute_path,
+        "file_exists": os.path.exists(full_path),
+        "file_exists_absolute": os.path.exists(absolute_path)
+    })
+    
+    # Check parent directory
+    parent_dir = os.path.dirname(full_path)
+    debug_info.update({
+        "parent_directory": parent_dir,
+        "parent_exists": os.path.exists(parent_dir)
+    })
+    
+    if os.path.exists(parent_dir):
+        try:
+            parent_contents = os.listdir(parent_dir)
+            debug_info["parent_contents"] = parent_contents
+        except Exception as e:
+            debug_info["parent_list_error"] = str(e)
+    
+    # Check if output_images exists and list contents
+    if os.path.exists('output_images'):
+        try:
+            output_contents = os.listdir('output_images')
+            debug_info["output_images_contents"] = output_contents
+            
+            # Check today's folder specifically
+            today = "2025-06-23"  # Update with current date
+            today_path = os.path.join('output_images', today)
+            if os.path.exists(today_path):
+                today_contents = os.listdir(today_path)
+                debug_info["today_folder_contents"] = today_contents
+            else:
+                debug_info["today_folder_exists"] = False
+                
+        except Exception as e:
+            debug_info["output_images_list_error"] = str(e)
+    else:
+        debug_info["output_images_exists"] = False
+    
+    return jsonify(debug_info)
+
+# Also add this simple test route:
+@ergonomic_bp.route('/test/model2/<path:filename>')
+def test_model2_simple(filename):
+    """Simple test of file serving"""
+    try:
+        print(f"[TEST] Requested: {filename}")
+        print(f"[TEST] CWD: {os.getcwd()}")
+        
+        # Try the exact same logic as your simple route
+        directory = os.path.join(os.getcwd(), 'output_images')
+        full_file_path = os.path.join(directory, filename)
+        
+        print(f"[TEST] Directory: {directory}")
+        print(f"[TEST] Full file path: {full_file_path}")
+        print(f"[TEST] File exists: {os.path.exists(full_file_path)}")
+        
+        if not os.path.exists(full_file_path):
+            return jsonify({
+                "error": "File not found",
+                "directory": directory,
+                "filename": filename,
+                "full_path": full_file_path,
+                "cwd": os.getcwd()
+            }), 404
+        
+        return send_from_directory(directory, filename, mimetype='image/png')
+        
+    except Exception as e:
+        print(f"[TEST] Exception: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
