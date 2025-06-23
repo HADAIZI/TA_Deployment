@@ -515,6 +515,7 @@ def create_row_dict(angles, filename, frame_num):
 def process_pose_from_bytes(image_bytes, output_visualization=True):
     """
     Process an image from bytes, detect pose, and generate predictions
+    Using EXACT same approach as your friend
     
     Args:
         image_bytes: Image data as bytes
@@ -571,43 +572,34 @@ def process_pose_from_bytes(image_bytes, output_visualization=True):
         
         visualization_path = None
         web_link = None
-        web_filename = None
         
         if output_visualization:
-            # Create output directory if it doesn't exist
+            # Create output directory - EXACTLY like your friend
             date_str = datetime.now().strftime("%Y-%m-%d")
             folder_path = os.path.join("output_images", date_str)
             os.makedirs(folder_path, exist_ok=True)
             
-            # Generate visualization
-            visualization_filename = f"{filename}_{int(reba_score)}_{datetime.now().strftime('%H%M%S')}.png"
-            visualization_path = os.path.join(folder_path, visualization_filename)
+            # Generate filename - EXACTLY like your friend
+            filename_web = datetime.now().strftime("%H%M%S_%f") + "_hasil.png"
+            filepath = os.path.join(folder_path, filename_web)
             
             # Generate and save visualization
             visualization = generate_pose_visualization(
                 processed_img, keypoints, component_scores, original_img, flip_required
             )
             
-            # Save visualization
-            cv2.imwrite(visualization_path, cv2.cvtColor(visualization, cv2.COLOR_RGB2BGR))
+            # Convert visualization to BGR for saving
+            img = cv2.cvtColor(visualization, cv2.COLOR_RGB2BGR)
             
-            # ===== WEB LINK GENERATION =====
-            # Create web-accessible filename similar to your example
-            web_filename = datetime.now().strftime("%H%M%S_%f") + "_hasil.png"
+            # Save image - EXACTLY like your friend
+            cv2.imwrite(filepath, img)
             
-            # Create web folder path (adjust this to your server setup)
-            web_folder_path = "output_images/web"  # Make sure this folder is served by your web server
-            os.makedirs(web_folder_path, exist_ok=True)
+            # Create web link - EXACTLY like your friend
+            link_image = "https://vps.danar.site/output_images/" + filepath.replace("\\", "/")
             
-            # Full filepath for web version
-            web_filepath = os.path.join(web_folder_path, web_filename)
-            
-            # Create web link (adjust your domain/path as needed)
-            web_link = "https://vps.danar.site/model2/" + web_filename  # Adjust URL to your server
-            
-            # Save another copy for web access
-            cv2.imwrite(web_filepath, cv2.cvtColor(visualization, cv2.COLOR_RGB2BGR))
-            # ===== END OF WEB LINK GENERATION =====
+            # Set variables for result
+            visualization_path = filepath
+            web_link = link_image
         
         # Store actual angle values
         angle_values = {
@@ -630,13 +622,14 @@ def process_pose_from_bytes(image_bytes, output_visualization=True):
             'feedback': feedback
         }
         
+        # Add visualization path for internal use
         if visualization_path:
+            # Return relative path like before for internal cleanup
             result['visualization_path'] = os.path.join(date_str, os.path.basename(visualization_path))
         
-        # Add web link to result
+        # Add web link for external access - EXACTLY like your friend
         if web_link:
             result['web_link'] = web_link
-            result['web_filename'] = web_filename
         
         return result
         

@@ -6,14 +6,13 @@ from datetime import datetime, timedelta
 from app.services.pose_estimation import process_pose_from_bytes
 from app.services.video_processor import process_video
 from app.services.job_manager import create_job, get_job, update_job
-from app.utils.file_cleanup import schedule_cleanup
 
 
 ergonomic_bp = Blueprint('ergonomic', __name__)
 
 @ergonomic_bp.route('/predict/image', methods=['POST'])
 def predict_image():
-    """Endpoint for analyzing a single image"""
+    """Endpoint for analyzing a single image - EXACT SAME AS YOUR FRIEND"""
     if 'image' not in request.files:
         return jsonify({"error": "No image file provided"}), 400
 
@@ -24,18 +23,15 @@ def predict_image():
         # Process image and get predictions
         result = process_pose_from_bytes(image_bytes)
         
-        # Schedule cleanup of visualization file
-        if 'visualization_path' in result:
-            schedule_cleanup(result['visualization_path'], delay_seconds=300)  # 5 minutes
-        
-        # Schedule cleanup of web image file too
-        if 'web_filename' in result:
-            web_file_path = os.path.join('output_images', 'web', result['web_filename'])
-            schedule_cleanup(web_file_path, delay_seconds=300)  # 5 minutes
-        
         return jsonify({"result": result})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@ergonomic_bp.route('/output_images/<path:filename>')
+def serve_output_image(filename):
+    """Serve output images - EXACT SAME AS YOUR FRIEND"""
+    directory = os.path.join(os.getcwd(), 'output_images')
+    return send_from_directory(directory, filename, mimetype='image/png')
 
 @ergonomic_bp.route("/predict/video", methods=["POST"])
 def predict_video():
@@ -136,43 +132,3 @@ def get_video_status():
     progress = 100.0 if status == "done" else 0.0
     
     return jsonify({"job_id": job_id, "status": status, "progress": progress})
-
-@ergonomic_bp.route('/output_images/<path:filename>')
-def serve_output_image(filename):
-    """Serve output images"""
-    # Extract date part from filename (expected format: YYYY-MM-DD/something.png)
-    parts = filename.split('/')
-    if len(parts) > 1:
-        date_dir = parts[0]
-        file_name = parts[1]
-        directory = os.path.join(os.getcwd(), 'output_images', date_dir)
-    else:
-        directory = os.path.join(os.getcwd(), 'output_images')
-        file_name = filename
-        
-    return send_from_directory(directory, file_name, mimetype='image/png')
-
-# ===== NEW WEB IMAGE ENDPOINT =====
-@ergonomic_bp.route('/model2/<filename>')
-def serve_web_image(filename):
-    """Serve web-accessible images from output_images/web/ folder"""
-    try:
-        # Serve from the web folder
-        web_directory = os.path.join(os.getcwd(), 'output_images', 'web')
-        
-        # Security check - only allow certain file extensions
-        allowed_extensions = {'.png', '.jpg', '.jpeg'}
-        file_ext = os.path.splitext(filename)[1].lower()
-        
-        if file_ext not in allowed_extensions:
-            return jsonify({"error": "Invalid file type"}), 400
-        
-        # Check if file exists
-        file_path = os.path.join(web_directory, filename)
-        if not os.path.exists(file_path):
-            return jsonify({"error": "File not found"}), 404
-        
-        return send_from_directory(web_directory, filename, mimetype='image/png')
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
