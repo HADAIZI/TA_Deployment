@@ -590,9 +590,6 @@ def process_pose_from_bytes(image_bytes, output_visualization=True):
             # Save visualization
             cv2.imwrite(visualization_path, cv2.cvtColor(visualization, cv2.COLOR_RGB2BGR))
             
-            # ===== ADD WEB LINK GENERATION =====
-            from datetime import datetime
-            import os
             
             # Create web-accessible filename similar to your example
             web_filename = datetime.now().strftime("%H%M%S_%f") + "_hasil.png"
