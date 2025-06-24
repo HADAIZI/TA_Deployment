@@ -515,13 +515,6 @@ def create_row_dict(angles, filename, frame_num):
 def process_pose_from_bytes(image_bytes, output_visualization=True):
     """
     Process an image from bytes, detect pose, and generate predictions
-    
-    Args:
-        image_bytes: Image data as bytes
-        output_visualization: Whether to generate visualization
-        
-    Returns:
-        dict: Results including REBA score, risk level, component scores, etc.
     """
     try:
         # Initialize MoveNet
@@ -569,36 +562,18 @@ def process_pose_from_bytes(image_bytes, output_visualization=True):
         # Add REBA score to component scores for visualization
         component_scores['reba_score'] = reba_score
         
-        visualization_path = None
-        web_link = None
+        # Initialize link variable
+        link_image = None
         
         if output_visualization:
-            # Create output directory
-            date_str = datetime.now().strftime("%Y-%m-%d")
-            folder_path = os.path.join("output_images", date_str)
-            os.makedirs(folder_path, exist_ok=True)
-            
-            # Generate filename
-            filename_web = datetime.now().strftime("%H%M%S_%f") + "_hasil.png"
-            filepath = os.path.join(folder_path, filename_web)
-            
-            # Generate and save visualization
+            # Generate visualization
             visualization = generate_pose_visualization(
-                processed_img, keypoints, component_scores, original_img, flip_required
+                processed_img, keypoints, component_scores, original_img, flip_required,
+                angle_values=angles
             )
             
-            # Convert visualization to BGR for saving
-            img = cv2.cvtColor(visualization, cv2.COLOR_RGB2BGR)
-            
-            # Save image
-            cv2.imwrite(filepath, img)
-            
-            # Create web link using /model2/ route
-            relative_path = filepath.replace("output_images/", "").replace("\\", "/")
-            web_link = "https://vps.danar.site/model2/" + relative_path
-            
-            # Set variables for result
-            visualization_path = filepath
+            # Save visualization - EXACTLY like your friend's approach
+            link_image = save_visualization_like_friend(visualization, component_scores)
         
         # Store actual angle values
         angle_values = {
@@ -621,13 +596,9 @@ def process_pose_from_bytes(image_bytes, output_visualization=True):
             'feedback': feedback
         }
         
-        # Add visualization path for internal use
-        if visualization_path:
-            result['visualization_path'] = os.path.join(date_str, os.path.basename(visualization_path))
-        
-        # Add web link for external access
-        if web_link:
-            result['web_link'] = web_link
+        # Add link if visualization was created
+        if link_image:
+            result['link_image'] = link_image
         
         return result
         
@@ -636,3 +607,27 @@ def process_pose_from_bytes(image_bytes, output_visualization=True):
         import traceback
         traceback.print_exc()
         raise
+
+
+def save_visualization_like_friend(visualization, hasil_prediksi):
+    """
+    Save visualization exactly like your friend's approach
+    """
+    # Convert RGB to BGR for OpenCV
+    img = cv2.cvtColor(visualization, cv2.COLOR_RGB2BGR)
+    
+    # Create folder path exactly like your friend
+    folder_path = os.path.join("output_images", datetime.now().strftime("%Y-%m-%d"))
+    os.makedirs(folder_path, exist_ok=True)
+    
+    # Create filename exactly like your friend
+    filename = datetime.now().strftime("%H%M%S_%f") + "_hasil.png"
+    filepath = os.path.join(folder_path, filename)
+    
+    # Create link exactly like your friend (only change: model1 -> model2)
+    link_image = "https://vps.danar.site/model2/" + filepath
+    
+    # Save the image
+    cv2.imwrite(filepath, img)
+    
+    return link_image

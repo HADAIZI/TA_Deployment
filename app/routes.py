@@ -1,12 +1,11 @@
 from flask import Blueprint, request, jsonify, send_from_directory, render_template
 import os
-import time
 import numpy as np
 from datetime import datetime, timedelta
 from app.services.pose_estimation import process_pose_from_bytes
 from app.services.video_processor import process_video
 from app.services.job_manager import create_job, get_job, update_job
-
+from app.utils.file_cleanup import schedule_cleanup
 
 ergonomic_bp = Blueprint('ergonomic', __name__)
 
@@ -26,6 +25,21 @@ def predict_image():
         return jsonify({"result": result})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@ergonomic_bp.route('/output_images/<path:filename>')
+def serve_output_image(filename):
+    """Serve output images"""
+    # Extract date part from filename (expected format: YYYY-MM-DD/something.png)
+    parts = filename.split('/')
+    if len(parts) > 1:
+        date_dir = parts[0]
+        file_name = parts[1]
+        directory = os.path.join(os.getcwd(), 'output_images', date_dir)
+    else:
+        directory = os.path.join(os.getcwd(), 'output_images')
+        file_name = filename
+        
+    return send_from_directory(directory, file_name, mimetype='image/png')
 
 @ergonomic_bp.route("/predict/video", methods=["POST"])
 def predict_video():
@@ -126,138 +140,3 @@ def get_video_status():
     progress = 100.0 if status == "done" else 0.0
     
     return jsonify({"job_id": job_id, "status": status, "progress": progress})
-
-@ergonomic_bp.route('/output_images/<path:filename>')
-def serve_output_image(filename):
-    """Serve output images with proper nested path handling"""
-    try:
-        print(f"[DEBUG] Requested filename: {filename}")
-        
-        # Handle nested paths properly
-        if '/' in filename:
-            # For paths like "2025-06-23/164323_285285_hasil.png"
-            path_parts = filename.split('/')
-            subdirectory = '/'.join(path_parts[:-1])  # "2025-06-23"
-            file_name = path_parts[-1]                # "164323_285285_hasil.png"
-            
-            # Serve from the specific subdirectory
-            directory = os.path.join('output_images', subdirectory)
-            
-            print(f"[DEBUG] Subdirectory: {subdirectory}")
-            print(f"[DEBUG] File name: {file_name}")
-            print(f"[DEBUG] Directory: {directory}")
-            print(f"[DEBUG] Directory exists: {os.path.exists(directory)}")
-            
-            if not os.path.exists(directory):
-                return jsonify({"error": f"Directory not found: {directory}"}), 404
-            
-            file_path = os.path.join(directory, file_name)
-            if not os.path.exists(file_path):
-                return jsonify({"error": f"File not found: {file_path}"}), 404
-            
-            return send_from_directory(directory, file_name, mimetype='image/png')
-        else:
-            # For direct files in output_images root
-            return send_from_directory('output_images', filename, mimetype='image/png')
-            
-    except Exception as e:
-        print(f"[DEBUG] Exception in serve_output_image: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-@ergonomic_bp.route('/model2/<path:filename>')
-def serve_model2_image(filename):
-    directory = os.path.join(os.getcwd(), 'output_images')
-    return send_from_directory(directory, filename, mimetype='image/png')
-
-@ergonomic_bp.route('/debug/check/<path:filename>')
-def debug_check_file(filename):
-    """Debug specific file access"""
-    import os
-    
-    debug_info = {
-        "requested_filename": filename,
-        "current_working_directory": os.getcwd(),
-        "absolute_cwd": os.path.abspath(os.getcwd())
-    }
-    
-    # Check the exact file path
-    full_path = os.path.join('output_images', filename)
-    absolute_path = os.path.abspath(full_path)
-    
-    debug_info.update({
-        "full_path": full_path,
-        "absolute_path": absolute_path,
-        "file_exists": os.path.exists(full_path),
-        "file_exists_absolute": os.path.exists(absolute_path)
-    })
-    
-    # Check parent directory
-    parent_dir = os.path.dirname(full_path)
-    debug_info.update({
-        "parent_directory": parent_dir,
-        "parent_exists": os.path.exists(parent_dir)
-    })
-    
-    if os.path.exists(parent_dir):
-        try:
-            parent_contents = os.listdir(parent_dir)
-            debug_info["parent_contents"] = parent_contents
-        except Exception as e:
-            debug_info["parent_list_error"] = str(e)
-    
-    # Check if output_images exists and list contents
-    if os.path.exists('output_images'):
-        try:
-            output_contents = os.listdir('output_images')
-            debug_info["output_images_contents"] = output_contents
-            
-            # Check today's folder specifically
-            today = "2025-06-23"  # Update with current date
-            today_path = os.path.join('output_images', today)
-            if os.path.exists(today_path):
-                today_contents = os.listdir(today_path)
-                debug_info["today_folder_contents"] = today_contents
-            else:
-                debug_info["today_folder_exists"] = False
-                
-        except Exception as e:
-            debug_info["output_images_list_error"] = str(e)
-    else:
-        debug_info["output_images_exists"] = False
-    
-    return jsonify(debug_info)
-
-# Also add this simple test route:
-@ergonomic_bp.route('/test/model2/<path:filename>')
-def test_model2_simple(filename):
-    """Simple test of file serving"""
-    try:
-        print(f"[TEST] Requested: {filename}")
-        print(f"[TEST] CWD: {os.getcwd()}")
-        
-        # Try the exact same logic as your simple route
-        directory = os.path.join(os.getcwd(), 'output_images')
-        full_file_path = os.path.join(directory, filename)
-        
-        print(f"[TEST] Directory: {directory}")
-        print(f"[TEST] Full file path: {full_file_path}")
-        print(f"[TEST] File exists: {os.path.exists(full_file_path)}")
-        
-        if not os.path.exists(full_file_path):
-            return jsonify({
-                "error": "File not found",
-                "directory": directory,
-                "filename": filename,
-                "full_path": full_file_path,
-                "cwd": os.getcwd()
-            }), 404
-        
-        return send_from_directory(directory, filename, mimetype='image/png')
-        
-    except Exception as e:
-        print(f"[TEST] Exception: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
