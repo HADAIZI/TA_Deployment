@@ -277,15 +277,15 @@ def process_video_segment(cap, movenet, input_size, resources, start_frame, end_
     # Add segment-specific info
     summary['processed_frames'] = processed_count
     
-    # Generate feedback using max component scores for highest risk assessment
+    # Generate feedback using average component scores and average REBA for more representative assessment
     feedback_component_scores = {
-        'trunk_score': summary['max_component_scores']['trunk'],
-        'neck_score': summary['max_component_scores']['neck'],
-        'upper_arm_score': summary['max_component_scores']['upper_arm'],
-        'lower_arm_score': summary['max_component_scores']['lower_arm'],
+        'trunk_score': summary['avg_component_scores']['trunk'],
+        'neck_score': summary['avg_component_scores']['neck'],
+        'upper_arm_score': summary['avg_component_scores']['upper_arm'],
+        'lower_arm_score': summary['avg_component_scores']['lower_arm'],
     }
     
-    summary['feedback'] = generate_feedback(feedback_component_scores, summary['max_reba_score'])
+    summary['feedback'] = generate_feedback(feedback_component_scores, summary['avg_reba_score'])
     
     return summary
 
@@ -481,14 +481,14 @@ def create_final_result(all_segment_results, video_name, metadata, use_segments,
             'segment_time': all_segment_results[highest_risk_index]['segment_info']
         }
         
-        # Generate overall feedback based on max values
+        # Generate overall feedback based on average values for more representative assessment
         feedback_component_scores = {
-            'trunk_score': overall_max_components['trunk'],
-            'neck_score': overall_max_components['neck'],
-            'upper_arm_score': overall_max_components['upper_arm'],
-            'lower_arm_score': overall_max_components['lower_arm'],
+            'trunk_score': overall_avg_components['trunk'],
+            'neck_score': overall_avg_components['neck'],
+            'upper_arm_score': overall_avg_components['upper_arm'],
+            'lower_arm_score': overall_avg_components['lower_arm'],
         }
-        final_result['overall_feedback'] = generate_feedback(feedback_component_scores, overall_max_reba)
+        final_result['overall_feedback'] = generate_feedback(feedback_component_scores, overall_avg_reba)
         
     else:
         # Single segment - use its result as the final result
