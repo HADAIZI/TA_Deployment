@@ -12,8 +12,6 @@ from app.services.pose_estimation import init_movenet, init_crop_region, get_joi
 from app.services.ergonomic_model import get_model_resources, engineer_features_for_single_image, predict_single_image
 from app.services.ergonomic_model import get_risk_level, generate_feedback
 from app.services.job_manager import update_job
-from app.utils.summarize_results import summarize_results
-from app.services.temporal_video_processor import enhance_resources_with_temporal_model, enhance_video_segment_processing
 
 # Constants
 FRAME_INTERVAL = 3  # Process every Nth frame
@@ -107,55 +105,19 @@ def process_frame_batch(frames_batch, movenet, input_size, start_frame_idx, segm
     return results
 
 
-def save_debug_frame(frame_data, frame_count, resources, frames_folder):
-    """Save a visualization of the processed frame for debugging"""
-    try:
-        # Create frame visualization
-        row = frame_data['row']
-        features, component_scores = engineer_features_for_single_image(row, resources)
-        reba_score = predict_single_image(features, resources)
-        component_scores['reba_score'] = reba_score
-        
-        # Generate visualization (import locally to avoid circular import)
-        from app.services.image_visualizer import generate_pose_visualization
-        
-        keypoints_adjusted = frame_data['keypoints'].copy()
-        crop_region = frame_data['crop_region']
-        frame_rgb = frame_data['frame_rgb']
-        
-        # Adjust keypoints for crop region
-        for idx in range(17):
-            keypoints_adjusted[0, 0, idx, 0] = (
-                crop_region['y_min'] * frame_rgb.shape[0] +
-                crop_region['height'] * frame_rgb.shape[0] *
-                keypoints_adjusted[0, 0, idx, 0]) / frame_rgb.shape[0]
-            keypoints_adjusted[0, 0, idx, 1] = (
-                crop_region['x_min'] * frame_rgb.shape[1] +
-                crop_region['width'] * frame_rgb.shape[1] *
-                keypoints_adjusted[0, 0, idx, 1]) / frame_rgb.shape[1]
-        
-        # Pass angle values to visualization for imputation indicators
-        angle_values = frame_data['angles']
-        
-        visualization = generate_pose_visualization(
-            frame_rgb, keypoints_adjusted, component_scores, 
-            angle_values=angle_values
-        )
-        
-        # Save visualization
-        debug_path = os.path.join(frames_folder, f"frame_{frame_count:06d}.jpg")
-        cv2.imwrite(debug_path, cv2.cvtColor(visualization, cv2.COLOR_RGB2BGR))
-        
-        return debug_path
-        
-    except Exception as e:
-        print(f"Warning: Could not save debug frame {frame_count}: {e}")
+def create_summary_results(rows, resources):
+    """Create simplified summary results focusing on max values instead of frame-by-frame details"""
+    if not rows:
         return None
-
-
-def create_frame_results(rows, resources):
-    """Create analysis results for each frame using updated pipeline"""
-    results = []
+    
+    # Process frames to get predictions
+    all_reba_scores = []
+    all_component_scores = {
+        'trunk': [],
+        'neck': [],
+        'upper_arm': [],
+        'lower_arm': []
+    }
     
     # Process in smaller batches to avoid memory issues
     batch_size = 100
@@ -172,35 +134,54 @@ def create_frame_results(rows, resources):
                 # Make prediction using the updated model
                 reba_score = predict_single_image(features, resources)
                 
-                # Create result with updated structure
-                result = {
-                    'frame': int(row['Frame']),
-                    'reba_score': float(reba_score),
-                    'component_scores': {
-                        'trunk': int(component_scores['trunk_score']),
-                        'neck': int(component_scores['neck_score']),
-                        'upper_arm': int(component_scores['upper_arm_score']),
-                        'lower_arm': int(component_scores['lower_arm_score']),
-                        # Note: leg_score excluded as per expert recommendation
-                    },
-                    'angle_values': {
-                        'neck': float(row['Neck Angle']),
-                        'waist': float(row['Waist Angle']),
-                        'left_upper_arm': float(row['Left Upper Arm Angle']),
-                        'right_upper_arm': float(row['Right Upper Arm Angle']),
-                        'left_lower_arm': float(row['Left Lower Arm Angle']),
-                        'right_lower_arm': float(row['Right Lower Arm Angle']),
-                        'left_leg': float(row['Left Leg Angle']),
-                        'right_leg': float(row['Right Leg Angle'])
-                    }
-                }
-                results.append(result)
+                all_reba_scores.append(float(reba_score))
+                all_component_scores['trunk'].append(int(component_scores['trunk_score']))
+                all_component_scores['neck'].append(int(component_scores['neck_score']))
+                all_component_scores['upper_arm'].append(int(component_scores['upper_arm_score']))
+                all_component_scores['lower_arm'].append(int(component_scores['lower_arm_score']))
                 
             except Exception as e:
                 print(f"Warning: Could not process frame {row.get('Frame', 'unknown')}: {e}")
                 continue
     
-    return results
+    if not all_reba_scores:
+        return None
+    
+    # Calculate summary statistics focusing on max values and overall metrics
+    max_reba_score = max(all_reba_scores)
+    avg_reba_score = np.mean(all_reba_scores)
+    
+    max_component_scores = {
+        'trunk': max(all_component_scores['trunk']) if all_component_scores['trunk'] else 1,
+        'neck': max(all_component_scores['neck']) if all_component_scores['neck'] else 1,
+        'upper_arm': max(all_component_scores['upper_arm']) if all_component_scores['upper_arm'] else 1,
+        'lower_arm': max(all_component_scores['lower_arm']) if all_component_scores['lower_arm'] else 1,
+    }
+    
+    avg_component_scores = {
+        'trunk': np.mean(all_component_scores['trunk']) if all_component_scores['trunk'] else 1,
+        'neck': np.mean(all_component_scores['neck']) if all_component_scores['neck'] else 1,
+        'upper_arm': np.mean(all_component_scores['upper_arm']) if all_component_scores['upper_arm'] else 1,
+        'lower_arm': np.mean(all_component_scores['lower_arm']) if all_component_scores['lower_arm'] else 1,
+    }
+    
+    # Create simplified summary
+    summary = {
+        'max_reba_score': max_reba_score,
+        'avg_reba_score': avg_reba_score,
+        'max_risk_level': get_risk_level(max_reba_score),
+        'avg_risk_level': get_risk_level(avg_reba_score),
+        'max_component_scores': max_component_scores,
+        'avg_component_scores': avg_component_scores,
+        'total_frames_analyzed': len(all_reba_scores),
+        'risk_distribution': {
+            'low_risk_frames': sum(1 for score in all_reba_scores if score < 4),
+            'medium_risk_frames': sum(1 for score in all_reba_scores if 4 <= score < 8),
+            'high_risk_frames': sum(1 for score in all_reba_scores if score >= 8),
+        }
+    }
+    
+    return summary
 
 
 def get_video_metadata(cap):
@@ -222,11 +203,7 @@ def get_video_metadata(cap):
 
 def process_video_segment(cap, movenet, input_size, resources, start_frame, end_frame, total_frames, 
                          job_folder, segment_index, progress_file):
-    """Process a segment of video frames and return the analysis results with batch optimization"""
-    # Create frames folder for debug images (optional)
-    frames_folder = os.path.join(job_folder, f"segment_{segment_index+1}_frames")
-    os.makedirs(frames_folder, exist_ok=True)
-    
+    """Process a segment of video frames and return simplified analysis results"""
     # Initialize tracking variables
     frame_count = start_frame
     processed_count = 0
@@ -268,18 +245,6 @@ def process_video_segment(cap, movenet, input_size, resources, start_frame, end_
             if batch_results:
                 all_rows.extend(batch_results)
                 processed_count += len(batch_results)
-                
-                # Save debug frame for first batch only
-                if len(all_rows) <= BATCH_SIZE and batch_results:
-                    # Create frame data for visualization
-                    frame_data = {
-                        'row': batch_results[0],
-                        'keypoints': None,  # We'd need to store this from process_frame
-                        'crop_region': None,
-                        'frame_rgb': None,
-                        'angles': None
-                    }
-                    # Skip debug frame saving for batch processing
             
         except Exception as e:
             print(f"Warning: Batch processing error: {e}")
@@ -303,29 +268,31 @@ def process_video_segment(cap, movenet, input_size, resources, start_frame, end_
         if processed_count == 0:
             return None
     
-    # Summarize segment results
-    summary = enhance_video_segment_processing(all_rows, resources, processed_count)
+    # Create simplified summary results
+    summary = create_summary_results(all_rows, resources)
+    
+    if not summary:
+        return None
     
     # Add segment-specific info
     summary['processed_frames'] = processed_count
     
-    # Generate feedback using new Indonesian feedback system
-    avg_component_scores = {
-        'trunk_score': summary['avg_component_scores']['trunk'],
-        'neck_score': summary['avg_component_scores']['neck'],
-        'upper_arm_score': summary['avg_component_scores']['upper_arm'],
-        'lower_arm_score': summary['avg_component_scores']['lower_arm'],
-        # Note: leg_score excluded as per expert recommendation
+    # Generate feedback using max component scores for highest risk assessment
+    feedback_component_scores = {
+        'trunk_score': summary['max_component_scores']['trunk'],
+        'neck_score': summary['max_component_scores']['neck'],
+        'upper_arm_score': summary['max_component_scores']['upper_arm'],
+        'lower_arm_score': summary['max_component_scores']['lower_arm'],
     }
     
-    summary['feedback'] = generate_feedback(avg_component_scores, summary['avg_reba_score'])
+    summary['feedback'] = generate_feedback(feedback_component_scores, summary['max_reba_score'])
     
     return summary
 
 
 def process_video(job_folder, job_id, video_path, segment_duration_minutes=None):
     """
-    Process a video file for ergonomic analysis with optimizations, optionally dividing it into segments
+    Process a video file for ergonomic analysis with simplified output focusing on max values
     
     Args:
         job_folder: Folder containing job files
@@ -344,7 +311,7 @@ def process_video(job_folder, job_id, video_path, segment_duration_minutes=None)
         resources = get_model_resources()
         if resources is None:
             raise ValueError("Could not load model resources")
-        resources = enhance_resources_with_temporal_model(resources)   
+        
         # Open video
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
@@ -451,12 +418,31 @@ def process_video(job_folder, job_id, video_path, segment_duration_minutes=None)
 
 
 def create_final_result(all_segment_results, video_name, metadata, use_segments, segment_duration_minutes):
-    """Create the final result object combining all segment results"""
+    """Create the final result object combining all segment results with focus on max values"""
     if not all_segment_results:
         return None
         
     if use_segments and len(all_segment_results) > 1:
-        # Multiple segments - create a parent result
+        # Multiple segments - create a parent result focusing on overall max values
+        overall_max_reba = max(s['max_reba_score'] for s in all_segment_results)
+        overall_avg_reba = np.mean([s['avg_reba_score'] for s in all_segment_results])
+        
+        # Find overall max component scores across all segments
+        overall_max_components = {
+            'trunk': max(s['max_component_scores']['trunk'] for s in all_segment_results),
+            'neck': max(s['max_component_scores']['neck'] for s in all_segment_results),
+            'upper_arm': max(s['max_component_scores']['upper_arm'] for s in all_segment_results),
+            'lower_arm': max(s['max_component_scores']['lower_arm'] for s in all_segment_results),
+        }
+        
+        # Calculate overall average component scores
+        overall_avg_components = {
+            'trunk': np.mean([s['avg_component_scores']['trunk'] for s in all_segment_results]),
+            'neck': np.mean([s['avg_component_scores']['neck'] for s in all_segment_results]),
+            'upper_arm': np.mean([s['avg_component_scores']['upper_arm'] for s in all_segment_results]),
+            'lower_arm': np.mean([s['avg_component_scores']['lower_arm'] for s in all_segment_results]),
+        }
+        
         final_result = {
             'video_metadata': {
                 'filename': video_name,
@@ -466,28 +452,44 @@ def create_final_result(all_segment_results, video_name, metadata, use_segments,
                 'segments_count': len(all_segment_results),
                 'segment_duration_minutes': segment_duration_minutes
             },
-            'segments': all_segment_results
+            'overall_max_reba_score': float(overall_max_reba),
+            'overall_avg_reba_score': float(overall_avg_reba),
+            'overall_max_risk_level': get_risk_level(overall_max_reba),
+            'overall_avg_risk_level': get_risk_level(overall_avg_reba),
+            'overall_max_component_scores': overall_max_components,
+            'overall_avg_component_scores': overall_avg_components,
+            'total_frames_analyzed': sum(s['total_frames_analyzed'] for s in all_segment_results),
+            'segment_summaries': [
+                {
+                    'segment_index': s['segment_info']['segment_index'],
+                    'max_reba_score': s['max_reba_score'],
+                    'avg_reba_score': s['avg_reba_score'],
+                    'max_risk_level': s['max_risk_level'],
+                    'max_component_scores': s['max_component_scores'],
+                    'frames_analyzed': s['total_frames_analyzed'],
+                    'start_time': s['segment_info']['start_time'],
+                    'end_time': s['segment_info']['end_time']
+                } for s in all_segment_results
+            ]
         }
         
-        # Calculate overall average REBA score
-        reba_scores = [s['avg_reba_score'] for s in all_segment_results]
-        final_result['overall_avg_reba_score'] = float(np.mean(reba_scores))
-        final_result['overall_risk_level'] = get_risk_level(final_result['overall_avg_reba_score'])
-        
         # Find highest risk segment
-        highest_risk_index = np.argmax(reba_scores)
+        highest_risk_index = np.argmax([s['max_reba_score'] for s in all_segment_results])
         final_result['highest_risk_segment'] = {
             'segment_index': highest_risk_index,
-            'segment_reba_score': reba_scores[highest_risk_index],
+            'max_reba_score': all_segment_results[highest_risk_index]['max_reba_score'],
             'segment_time': all_segment_results[highest_risk_index]['segment_info']
         }
         
-        # Combined recommendations (now in Indonesian)
-        all_recommendations = set()
-        for segment in all_segment_results:
-            if 'recommendations' in segment:
-                all_recommendations.update(segment['recommendations'])
-        final_result['overall_recommendations'] = list(all_recommendations)
+        # Generate overall feedback based on max values
+        feedback_component_scores = {
+            'trunk_score': overall_max_components['trunk'],
+            'neck_score': overall_max_components['neck'],
+            'upper_arm_score': overall_max_components['upper_arm'],
+            'lower_arm_score': overall_max_components['lower_arm'],
+        }
+        final_result['overall_feedback'] = generate_feedback(feedback_component_scores, overall_max_reba)
+        
     else:
         # Single segment - use its result as the final result
         final_result = all_segment_results[0]
